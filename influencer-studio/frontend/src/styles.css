@@ -885,6 +885,28 @@ input[type="range"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.clip audio {
+  width: calc(100% - 24px);
+  margin: 12px 12px 0;
+}
+.error-text {
+  color: var(--danger);
+}
+.record-btn.is-recording {
+  border-color: var(--danger);
+  color: var(--danger);
+  animation: recording 1.2s ease-in-out infinite;
+}
+@keyframes recording {
+  50% {
+    background: rgba(255, 107, 107, 0.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .record-btn.is-recording {
+    animation: none;
+  }
+}
 .clip-pending {
   max-width: 320px;
   border-radius: var(--radius);
@@ -915,8 +937,16 @@ input[type="range"] {
   .brand__text {
     display: none;
   }
+  .topbar nav {
+    min-width: 0;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    font-size: 12px;
+  }
   .topbar nav a {
-    padding: 7px 10px;
+    padding: 7px 8px;
+    white-space: nowrap;
   }
   .page,
   .stage {

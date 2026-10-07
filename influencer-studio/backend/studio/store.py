@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS images_by_character ON images(character_id, created_a
 CREATE TABLE IF NOT EXISTS clips (
     id TEXT PRIMARY KEY,
     character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,          -- driver | music (uploads) | dance | music_dance | motion
+    kind TEXT NOT NULL,          -- uploads: driver | music | voice | speech; generated: dance | music_dance | motion | talk | speech
     ext TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
     caption TEXT NOT NULL DEFAULT '',
@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS clips_by_character ON clips(character_id, created_at)
 
 _MEDIA_TYPES = {
     "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/mp4", "webm": "video/webm", "mkv": "video/x-matroska",
-    "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "aac": "audio/aac", "ogg": "audio/ogg", "flac": "audio/flac",
+    "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "aac": "audio/aac", "ogg": "audio/ogg", "opus": "audio/ogg", "flac": "audio/flac",
 }
 
 
@@ -80,6 +80,10 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(_SCHEMA)
+        columns = {r["name"] for r in self._db.execute("PRAGMA table_info(characters)")}
+        if "voice_id" not in columns:  # databases created before the voice studio
+            self._db.execute("ALTER TABLE characters ADD COLUMN voice_id TEXT")
+            self._db.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -180,7 +184,8 @@ class Store:
 
     def delete_clip(self, clip_id: str) -> None:
         if clip := self.clip(clip_id):
-            self._write(("DELETE FROM clips WHERE id = ?", (clip_id,)))
+            self._write(("DELETE FROM clips WHERE id = ?", (clip_id,)),
+                        ("UPDATE characters SET voice_id = NULL WHERE voice_id = ?", (clip_id,)))
             self.clip_path(clip).unlink(missing_ok=True)
 
     # ── characters ──────────────────────────────────────────────────────────
@@ -212,14 +217,18 @@ class Store:
         reference_ids: list[str] | None = None,
         lora: str | None = None,
         lora_strength: float | None = None,
+        voice_id: str | None = None,
     ) -> None:
         changes = {
             "name": name,
             "reference_ids": json.dumps(reference_ids) if reference_ids is not None else None,
             "lora": lora,
             "lora_strength": lora_strength,
+            "voice_id": voice_id,
         }
         changes = {k: v for k, v in changes.items() if v is not None}
+        if changes.get("voice_id") == "":  # "" clears the voice
+            changes["voice_id"] = None
         if not changes:
             return
         self._write((
@@ -261,5 +270,6 @@ def _character_row(row: sqlite3.Row) -> dict:
         "reference_ids": json.loads(row["reference_ids"]),
         "lora": row["lora"],
         "lora_strength": row["lora_strength"],
+        "voice_id": row["voice_id"],
         "created_at": row["created_at"],
     }

@@ -7,6 +7,8 @@ Three modes, each mirroring an official ComfyUI template node-for-node:
 - music:  Wan-Dancer-14B — music-driven dance from a single image: a global pass plans
           keyframes from the audio, a local pass renders 5-second 30 fps segments.
 - motion: Wan 2.2 I2V A14B + 4-step lightx2v LoRAs — prompt-driven 5-second moves.
+- talk:   InfiniteTalk on Wan 2.1 I2V 480p — lip-synced talking video from an image and speech.
+          Long speech is rendered in 81-frame windows that overlap by 9 motion frames.
 """
 
 from __future__ import annotations
@@ -47,6 +49,12 @@ WAN22_LORA_HIGH = ModelFile("loras", "wan2.2_i2v_lightx2v_4steps_lora_v1_high_no
                             f"{_WAN22}/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors")
 WAN22_LORA_LOW = ModelFile("loras", "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
                            f"{_WAN22}/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors")
+WAN21_I2V_480P = ModelFile("diffusion_models", "Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors",
+                           f"{_HF}/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors")
+INFINITETALK = ModelFile("model_patches", "wan2.1_infiniteTalk_single_fp16.safetensors",
+                         f"{_HF}/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/model_patches/wan2.1_infiniteTalk_single_fp16.safetensors")
+WAV2VEC2 = ModelFile("audio_encoders", "wav2vec2-chinese-base_fp16.safetensors",
+                     f"{_HF}/Kijai/wav2vec2_safetensors/resolve/main/wav2vec2-chinese-base_fp16.safetensors")
 FILM = ModelFile("frame_interpolation", "film_net_fp16.safetensors",
                  f"{_HF}/Comfy-Org/frame_interpolation/resolve/main/frame_interpolation/film_net_fp16.safetensors")
 
@@ -54,6 +62,7 @@ MODE_FILES: dict[str, tuple[ModelFile, ...]] = {
     "dance": (ANIMATE2, UMT5, CLIP_VISION_H, WAN_VAE),
     "music": (DANCER_GLOBAL, DANCER_LOCAL, LIGHTX2V_I2V, UMT5, CLIP_VISION_H, WAN_VAE),
     "motion": (WAN22_HIGH, WAN22_LOW, WAN22_LORA_HIGH, WAN22_LORA_LOW, UMT5, WAN_VAE),
+    "talk": (WAN21_I2V_480P, INFINITETALK, WAV2VEC2, LIGHTX2V_I2V, UMT5, WAN_VAE),
     "smooth": (FILM,),
 }
 
@@ -68,6 +77,8 @@ SEGMENT_FRAMES = 81  # one Wan-Animate-2 window (5 s at 16 fps)
 DANCER_FRAMES = 149  # Wan-Dancer keyframe/segment length
 DANCER_FPS = 30
 DANCER_SEGMENT_SECONDS = 5
+TALK_FPS = 25  # InfiniteTalk's training frame rate (audio features are interpolated to 25 fps)
+TALK_MOTION_FRAMES = 9  # frames each window reuses from the previous one
 
 # All sizes are multiples of 16, as the Wan latent nodes require.
 RESOLUTIONS: dict[str, dict[str, tuple[int, int]]] = {
@@ -338,4 +349,66 @@ def build_motion_graph(p: MotionParams) -> Graph:
     latent = g.add("KSamplerAdvanced", model=low, add_noise="disable", noise_seed=0, latent_image=latent,
                    start_at_step=2, end_at_step=4, return_with_leftover_noise="disable", **common)
     _finish(g, g.add("VAEDecode", samples=latent, vae=vae), WAN_FPS, None, p.smooth)
+    return g
+
+
+# ── talk: InfiniteTalk lip-sync ─────────────────────────────────────────────
+def talk_windows(frames: int) -> tuple[int, int]:
+    """(window length, window count); later windows add SEGMENT_FRAMES - TALK_MOTION_FRAMES new frames."""
+    if frames <= SEGMENT_FRAMES:
+        return 4 * math.ceil((frames - 1) / 4) + 1, 1
+    return SEGMENT_FRAMES, 1 + math.ceil((frames - SEGMENT_FRAMES) / (SEGMENT_FRAMES - TALK_MOTION_FRAMES))
+
+
+@dataclass(frozen=True)
+class TalkParams:
+    image: str
+    audio: str  # speech as WAV in ComfyUI's input folder
+    frames: int  # ceil(speech seconds * TALK_FPS)
+    width: int
+    height: int
+    prompt: str
+    seed: int
+    smooth: bool = False
+
+
+def build_talk_graph(p: TalkParams) -> Graph:
+    g = Graph()
+    model = g.add("UNETLoader", unet_name=WAN21_I2V_480P.name, weight_dtype="default")
+    model = g.add("LoraLoaderModelOnly", model=model, lora_name=LIGHTX2V_I2V.name, strength_model=1.0)
+    patch = g.add("ModelPatchLoader", name=INFINITETALK.name)
+    clip, vae = _loaders(g)
+    positive = g.add("CLIPTextEncode", text=p.prompt, clip=clip)
+    negative = g.add("ConditioningZeroOut", conditioning=positive)
+    audio = g.add("LoadAudio", audio=p.audio)
+    speech = g.add("AudioEncoderEncode", audio_encoder=g.add("AudioEncoderLoader", audio_encoder_name=WAV2VEC2.name),
+                   audio=audio)
+    start = _image(g, p.image, p.width, p.height)
+    sampler = g.add("KSamplerSelect", sampler_name="euler")
+
+    length, windows = talk_windows(p.frames)
+    video = None
+    for _ in range(windows):
+        # Each window reads the speech from (frames so far - motion frames) and continues the motion.
+        talk = g.add(
+            "WanInfiniteTalkToVideo", mode="single_speaker", model=model, model_patch=patch,
+            positive=positive, negative=negative, vae=vae, width=p.width, height=p.height, length=length,
+            start_image=start, audio_encoder_output_1=speech, motion_frame_count=TALK_MOTION_FRAMES,
+            audio_scale=1.0, **({"previous_frames": video} if video else {}),
+        )
+        latent = g.add(
+            "SamplerCustomAdvanced",
+            noise=g.add("RandomNoise", noise_seed=p.seed),
+            guider=g.add("CFGGuider", model=out(talk, 0), positive=out(talk, 1), negative=out(talk, 2), cfg=1.0),
+            sampler=sampler,
+            sigmas=g.add("BasicScheduler", model=out(talk, 0), scheduler="normal", steps=6, denoise=1.0),
+            latent_image=out(talk, 3),
+        )
+        images = g.add("VAEDecode", samples=latent, vae=vae)
+        # Drop the motion frames the window re-rendered (trim_image is 0 for the first window).
+        fresh = g.add("ImageFromBatch", image=images, batch_index=out(talk, 4), length=4096)
+        video = fresh if video is None else g.add("ImageBatch", image1=video, image2=fresh)
+
+    video = g.add("ImageFromBatch", image=video, batch_index=0, length=p.frames)
+    _finish(g, video, TALK_FPS, audio, p.smooth)
     return g

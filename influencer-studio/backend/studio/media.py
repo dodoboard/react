@@ -39,7 +39,7 @@ def probe(path: Path) -> MediaInfo:
         with av.open(str(path)) as container:
             video = next((s for s in container.streams if s.type == "video"), None)
             audio = next((s for s in container.streams if s.type == "audio"), None)
-            duration = container.duration / av.time_base if container.duration else 0.0
+            duration = container.duration / av.time_base if container.duration else _scan_duration(path)
             if video is None:
                 return MediaInfo(duration=duration, has_video=False, has_audio=audio is not None)
             width, height = video.codec_context.width, video.codec_context.height
@@ -50,6 +50,16 @@ def probe(path: Path) -> MediaInfo:
                              width=width, height=height, fps=float(video.average_rate or 0))
     except (av.FFmpegError, StopIteration) as e:
         raise MediaError(f"unreadable media file: {e}") from e
+
+
+def _scan_duration(path: Path) -> float:
+    """Duration of files without one in the header (browser MediaRecorder WebM): demux to the last packet."""
+    with av.open(str(path)) as container:
+        end = 0.0
+        for packet in container.demux():
+            if packet.pts is not None and packet.time_base:
+                end = max(end, float((packet.pts + (packet.duration or 0)) * packet.time_base))
+        return max(0.0, end - _origin(container))
 
 
 def _origin(container: av.container.InputContainer) -> float:

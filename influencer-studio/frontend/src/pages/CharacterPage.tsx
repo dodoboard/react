@@ -99,6 +99,9 @@ export function CharacterPage({ id, navigate }: { id: string; navigate: (path: s
           <a className="btn btn--ghost" href={`#/motion/${id}`}>
             Make it move
           </a>
+          <a className="btn btn--ghost" href={`#/talk/${id}`}>
+            Make it talk
+          </a>
           <a className="btn btn--primary" href={`#/create/${id}`}>
             Create content
           </a>

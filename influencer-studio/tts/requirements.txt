@@ -1,0 +1,19 @@
+# Chatterbox Multilingual's runtime dependencies, minus its torch==2.6 pin (too old for RTX 50
+# series). torch/torchaudio are installed first from the PyTorch CUDA index by install.bat.
+# chatterbox-tts itself is installed with --no-deps.
+numpy>=1.26
+librosa==0.11.0
+s3tokenizer
+transformers==5.2.0
+diffusers==0.29.0
+resemble-perth==1.0.1
+conformer==0.3.2
+safetensors==0.5.3
+pyloudnorm
+einops
+scipy
+omegaconf
+huggingface_hub
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9

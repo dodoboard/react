@@ -2,7 +2,7 @@ import av
 import pytest
 
 from studio.media import MediaError, extract_audio, prepare_driver, probe
-from tests.media_fixtures import make_video, make_wav, square_time, wav_onset
+from tests.media_fixtures import make_recording, make_video, make_wav, square_time, wav_onset
 
 
 def test_probe(tmp_path):
@@ -11,6 +11,11 @@ def test_probe(tmp_path):
     assert info.fps == 30 and info.duration == pytest.approx(2, abs=0.1)
     song = probe(make_wav(tmp_path / "a.wav", seconds=1.5, onset=0))
     assert not song.has_video and song.has_audio and song.duration == pytest.approx(1.5, abs=0.01)
+    rec = tmp_path / "mic.webm"
+    make_recording(rec, seconds=4)
+    with av.open(str(rec)) as c:
+        assert c.duration is None  # no header duration: probe must measure it
+    assert probe(rec).duration == pytest.approx(4, abs=0.05)
     (tmp_path / "junk.mp4").write_bytes(b"not a video")
     with pytest.raises(MediaError):
         probe(tmp_path / "junk.mp4")

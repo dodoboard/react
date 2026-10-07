@@ -74,3 +74,20 @@ def square_time(frame: av.VideoFrame, src_size: tuple[int, int], out_size: tuple
     scale = max(w / src_size[0], h / src_size[1])
     crop = (src_size[0] * scale - w) / 2
     return (x + crop) / scale / SQUARE_SPEED
+
+
+def make_recording(path: Path, *, seconds: float) -> Path:
+    """Opus WebM without a duration header, like Chrome's MediaRecorder writes."""
+    rate = 48000
+    with av.open(str(path), "w", format="webm", options={"live": "1"}) as out:
+        stream = out.add_stream("libopus", rate=rate, layout="mono")
+        for start in range(0, int(seconds * rate), 960):
+            frame = av.AudioFrame(format="s16", layout="mono", samples=960)
+            pcm = b"".join(struct.pack("<h", int(8000 * math.sin(i * 0.06))) for i in range(start, start + 960))
+            frame.planes[0].update(pcm + bytes(frame.planes[0].buffer_size - len(pcm)))
+            frame.sample_rate, frame.pts = rate, start
+            for packet in stream.encode(frame):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    return path

@@ -107,8 +107,13 @@ class Studio:
             if missing := [r for r in refs if r not in owned]:
                 raise Invalid(f"images not in this character: {missing}")
         lora = req.lora.strip() if req.lora is not None else None
+        if req.voice_id:
+            voice = self.store.clip(req.voice_id)
+            if not voice or voice["kind"] != "voice":
+                raise Invalid(f"voice {req.voice_id} not found")
         self.store.update_character(
-            character_id, name=req.name, reference_ids=refs, lora=lora, lora_strength=req.lora_strength
+            character_id, name=req.name, reference_ids=refs, lora=lora, lora_strength=req.lora_strength,
+            voice_id=req.voice_id,
         )
         return self.character_detail(character_id)
 

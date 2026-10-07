@@ -6,11 +6,14 @@ import type {
   Health,
   ImageMeta,
   Job,
+  MediaKind,
   MotionHealth,
   MotionSchema,
   Orientation,
   Resolution,
   Schema,
+  VoiceHealth,
+  VoiceSchema,
 } from "./types";
 
 function formatDetail(detail: unknown): string {
@@ -87,6 +90,29 @@ export interface MotionPresetBody extends MotionCommon {
   prompt: string;
 }
 
+export interface VoiceOptions {
+  language: string;
+  exaggeration: number;
+  cfg_weight: number;
+  seed: number | null;
+}
+
+/** Speech uses the character's voice (or the built-in one when none is set). */
+export interface SpeakBody extends VoiceOptions {
+  text: string;
+  character_id: string;
+}
+
+/** Lip-sync either a script (TTS) or an existing speech clip. */
+export interface TalkBody extends VoiceOptions {
+  source_image_id: string;
+  orientation: Orientation;
+  smooth: boolean;
+  text: string;
+  speech_id: string | null;
+  prompt: string;
+}
+
 /** XHR upload so large dance clips can report progress. */
 function uploadWithProgress<T>(url: string, file: File, onProgress: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -115,6 +141,7 @@ export interface CharacterPatch {
   reference_ids?: string[];
   lora?: string;
   lora_strength?: number;
+  voice_id?: string; // "" clears it
 }
 
 export const api = {
@@ -145,8 +172,8 @@ export const api = {
 
   motionSchema: () => request<MotionSchema>("/api/motion/schema"),
   motionHealth: () => request<MotionHealth>("/api/motion/health"),
-  mediaUploads: (kind: "driver" | "music") => request<ClipMeta[]>(`/api/motion/uploads?kind=${kind}`),
-  uploadMedia: (kind: "driver" | "music", file: File, onProgress: (f: number) => void) =>
+  mediaUploads: (kind: MediaKind) => request<ClipMeta[]>(`/api/motion/uploads?kind=${kind}`),
+  uploadMedia: (kind: MediaKind, file: File, onProgress: (f: number) => void) =>
     uploadWithProgress<ClipMeta>(`/api/motion/uploads?kind=${kind}`, file, onProgress),
   dance: (characterId: string, body: DanceBody) =>
     request<Job<ClipMeta>>(`/api/characters/${characterId}/motion/dance`, json("POST", body)),
@@ -156,4 +183,10 @@ export const api = {
     request<Job<ClipMeta>>(`/api/characters/${characterId}/motion/preset`, json("POST", body)),
   characterClips: (characterId: string) => request<ClipMeta[]>(`/api/characters/${characterId}/clips`),
   deleteClip: (id: string) => request<void>(`/api/clips/${id}`, { method: "DELETE" }),
+
+  voiceSchema: () => request<VoiceSchema>("/api/voice/schema"),
+  voiceHealth: () => request<VoiceHealth>("/api/voice/health"),
+  speak: (body: SpeakBody) => request<Job<ClipMeta>>("/api/voice/speak", json("POST", body)),
+  talk: (characterId: string, body: TalkBody) =>
+    request<Job<ClipMeta>>(`/api/characters/${characterId}/talk`, json("POST", body)),
 };

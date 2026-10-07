@@ -6,6 +6,7 @@ import { CharacterPage } from "./pages/CharacterPage";
 import { CharactersPage } from "./pages/CharactersPage";
 import { CreatePage } from "./pages/CreatePage";
 import { MotionPage } from "./pages/MotionPage";
+import { TalkPage } from "./pages/TalkPage";
 import type { Health, Schema } from "./types";
 
 const NAV = [
@@ -13,6 +14,7 @@ const NAV = [
   { path: "characters", label: "Influencers" },
   { path: "create", label: "Create" },
   { path: "motion", label: "Motion" },
+  { path: "talk", label: "Talk" },
 ];
 
 function HealthPill({ health }: { health: Health | null }) {
@@ -84,6 +86,8 @@ export function App() {
       <CreatePage characterId={param} navigate={navigate} />
     ) : section === "motion" ? (
       <MotionPage characterId={param} navigate={navigate} />
+    ) : section === "talk" ? (
+      <TalkPage characterId={param} navigate={navigate} />
     ) : (
       <BuilderPage navigate={navigate} />
     );

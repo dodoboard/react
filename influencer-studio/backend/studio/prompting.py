@@ -164,3 +164,12 @@ def motion_prompt(spec: CharacterSpec, action: str) -> str:
     action = action.format(**_who(spec)) if "{" in action else action
     return (f"{_subject_line(spec)} {_sentence(action)} "
             "Smooth natural motion, realistic physics, consistent face and outfit, high quality.")
+
+
+def talk_prompt(spec: CharacterSpec, extra: str = "") -> str:
+    who = _who(spec)["who"]
+    parts = [_subject_line(spec), f"{who[:1].upper()}{who[1:]} is talking to the camera with natural lip movement, "
+             "lively facial expressions and subtle head and hand motion."]
+    if extra.strip():
+        parts.append(_sentence(extra))
+    return " ".join(parts + ["Steady camera, consistent face, high quality."])

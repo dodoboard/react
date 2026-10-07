@@ -52,7 +52,7 @@ KNOWN_NODES = {
     "SamplerCustom", "TrimVideoLatent", "WanDancerEncodeAudio", "StringConcatenate", "SkipLayerGuidanceDiTSimple",
     "WanDancerVideo", "LatentCutToBatch", "WanDancerPadKeyframesList", "ConditioningZeroOut", "RebatchImages",
     "WanImageToVideo", "KSamplerAdvanced", "FrameInterpolationModelLoader", "FrameInterpolate", "CreateVideo",
-    "SaveVideo",
+    "SaveVideo", "ModelPatchLoader", "AudioEncoderLoader", "AudioEncoderEncode", "WanInfiniteTalkToVideo",
 }
 _MODEL_INPUTS = {
     ("UNETLoader", "unet_name"): "diffusion_models",
@@ -61,10 +61,12 @@ _MODEL_INPUTS = {
     ("LoraLoaderModelOnly", "lora_name"): "loras",
     ("CLIPVisionLoader", "clip_name"): "clip_vision",
     ("FrameInterpolationModelLoader", "model_name"): "frame_interpolation",
+    ("ModelPatchLoader", "name"): "model_patches",
+    ("AudioEncoderLoader", "audio_encoder_name"): "audio_encoders",
 }
 _INPUT_FILES = {("LoadImage", "image"), ("LoadVideo", "file"), ("LoadAudio", "audio")}
 _SAMPLERS = {"SamplerCustom", "SamplerCustomAdvanced", "KSamplerAdvanced"}
-_VIDEO_SIZE_NODES = ("WanAnimate2ToVideo", "WanDancerVideo", "WanImageToVideo")
+_VIDEO_SIZE_NODES = ("WanAnimate2ToVideo", "WanDancerVideo", "WanImageToVideo", "WanInfiniteTalkToVideo")
 
 
 def _placeholder_video(width: int, height: int, label: str, fps: int, with_audio: bool, frames: int = 24) -> bytes:
@@ -124,6 +126,7 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     app = FastAPI()
     app.state.models = ALL_MODELS if models is None else models
     app.state.prompts = []  # graphs received, for test assertions
+    app.state.frees = 0
     clients: dict[str, WebSocket] = {}
     inputs: dict[str, bytes] = {}
     outputs: dict[str, bytes] = {}
@@ -132,6 +135,11 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     @app.get("/system_stats")
     def system_stats() -> dict:
         return {"system": {"comfyui_version": "fake"}, "devices": [{"name": "Fake GPU", "vram_total": 16 * 2**30}]}
+
+    @app.post("/free")
+    def free(body: dict) -> dict:
+        app.state.frees += 1
+        return {}
 
     @app.get("/models/{folder}")
     def models_in(folder: str) -> list[str]:

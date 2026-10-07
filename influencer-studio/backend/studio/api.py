@@ -14,9 +14,12 @@ from .flux2 import PROFILES
 from .jobs import JobQueue
 from .models import (
     BuilderRequest, ContentRequest, CreateCharacterRequest, DanceRequest, IdentityPackRequest,
-    MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, UpdateCharacterRequest,
+    MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
+    UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
+from .voice import TTSClient, VoiceStudio
+from .voice import public_schema as voice_schema
 from .prompting import character_prompt
 from .service import Invalid, NotFound, Studio
 from .settings import Settings
@@ -26,7 +29,8 @@ MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_MEDIA_BYTES = 500 * 1024 * 1024
 
 
-def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = None,
+               tts: TTSClient | None = None) -> FastAPI:
     settings = settings or Settings()
     if settings.profile not in PROFILES:
         raise SystemExit(f"Unknown STUDIO_PROFILE '{settings.profile}'. Options: {', '.join(PROFILES)}")
@@ -38,6 +42,8 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         raise SystemExit("STUDIO_POSE_CACHE must be off, int4, int8 or default")
     motion = MotionStudio(comfy, store, jobs, settings.data_dir / "work",
                           None if settings.pose_cache == "off" else settings.pose_cache)
+    tts = tts or TTSClient(settings.tts_url)
+    voice = VoiceStudio(comfy, tts, store, jobs, motion)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -45,10 +51,12 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         yield
         worker.cancel()
         await comfy.aclose()
+        await tts.aclose()
         store.close()
 
     app = FastAPI(title="Influencer Studio", lifespan=lifespan)
     app.state.studio = studio
+    app.state.voice = voice
 
     @app.exception_handler(NotFound)
     async def _not_found(_: Request, e: NotFound) -> JSONResponse:
@@ -196,6 +204,23 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     def delete_clip(clip_id: str) -> Response:
         motion.delete_clip(clip_id)
         return Response(status_code=204)
+
+    # ── Voice studio ────────────────────────────────────────────────────────
+    @app.get("/api/voice/schema")
+    def voice_schema_route() -> dict:
+        return voice_schema()
+
+    @app.get("/api/voice/health")
+    async def voice_health() -> dict:
+        return await voice.health()
+
+    @app.post("/api/voice/speak")
+    async def voice_speak(req: SpeakRequest) -> dict:
+        return job_response(voice.speak(req))
+
+    @app.post("/api/characters/{character_id}/talk")
+    async def character_talk(character_id: str, req: TalkRequest) -> dict:
+        return job_response(voice.talk(character_id, req))
 
     if settings.frontend_dist.is_dir():
         app.mount("/", StaticFiles(directory=settings.frontend_dist, html=True), name="frontend")

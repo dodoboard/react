@@ -22,8 +22,14 @@ class ComfyBackend(Protocol):
     async def run(
         self, graph: dict, on_progress: ProgressFn | None = None, progress_nodes: Sequence[str] = ()
     ) -> list[bytes]: ...
+    async def free(self) -> None:
+        """Unload ComfyUI's models so another GPU process (the TTS server) has the VRAM."""
+        r = await self._http.post("/free", json={"unload_models": True, "free_memory": True})
+        r.raise_for_status()
+
     async def models(self, folder: str) -> list[str]: ...
     async def system_stats(self) -> dict: ...
+    async def free(self) -> None: ...
     async def aclose(self) -> None: ...
 
 
@@ -49,6 +55,11 @@ class ComfyClient:
         r = await self._http.get("/system_stats")
         r.raise_for_status()
         return r.json()
+
+    async def free(self) -> None:
+        """Unload ComfyUI's models so another GPU process (the TTS server) has the VRAM."""
+        r = await self._http.post("/free", json={"unload_models": True, "free_memory": True})
+        r.raise_for_status()
 
     async def models(self, folder: str) -> list[str]:
         r = await self._http.get(f"/models/{folder}")

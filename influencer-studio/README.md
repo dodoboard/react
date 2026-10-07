@@ -10,6 +10,7 @@ Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde gör
 | İçerik üretimi                    | Create: 15 sahne preset'i + serbest prompt, referanslarla aynı yüz                 |
 | –                                 | LoRA veri seti dışa aktarma (ai-toolkit config'iyle)                               |
 | Motion (Genjutsu)                 | Motion: dans aktarımı, müzikle dans, hareket şablonları. Bkz. [Motion](#motion)    |
+| Konuşan video / lipsync           | Talk: Türkçe TTS, ses klonlama, InfiniteTalk dudak senkronu. Bkz. [Talk](#talk)    |
 
 ## Gereksinimler
 
@@ -85,13 +86,46 @@ Dans klibi backend'de ön işlenir: seçilen aralık kesilir, 16 fps'e indirilir
 - Referans hız: ComfyUI'ın Wan 2.2 şablonundaki ölçüm, RTX 4090D'de 640×640 ve 4 adımla klip başına ~70–100 sn. Laptop GPU'sunda daha uzun sürer.
 - Dans klibi: tek kişi, tam boy, sabit kamera en iyi sonucu verir. Yalnızca hakkına sahip olduğun klipleri kullan.
 
+## Talk
+
+Karakterini konuşturur: yazdığın metni karakterin sesiyle okur ve dudak senkronlu video üretir.
+
+| Adım      | Ne olur                                                                                                       | Model                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **Ses**   | Karaktere 10–15 sn'lik ses örneği ata (yükle ya da mikrofonla kaydet). Atanmamışsa yerleşik ses kullanılır    | Chatterbox Multilingual (MIT, Türkçe dahil 22 dil) |
+| **Metin** | Türkçe metin okunmadan önce düzenlenir: sayılar, %, para, saat, sıra sayıları, kısaltmalar. Cümlelere bölünür | `backend/studio/turkish.py`                        |
+| **Video** | Ses + başlangıç karesi → konuşan video: 480p, 25 fps, en fazla 30 sn                                          | InfiniteTalk (Wan 2.1 I2V 480p + lightx2v LoRA)    |
+
+Örnekler: `%25 indirim` → "yüzde yirmi beş indirim", `₺49,90` → "kırk dokuz lira doksan kuruş", `14:30'da` → "on dört otuzda", `21. yüzyıl` → "yirmi birinci yüzyıl".
+
+- **Write a script**: metni yaz, **Preview voice** ile dinle. Her deneme **Speech takes** altında kalır; beğendiğini **Lip-sync this** ile aynen videoya çevir.
+- **Use a recording**: kendi seslendirmeni yükle ya da mikrofonla kaydet. TTS atlanır.
+- **Expressiveness** duygu yoğunluğunu, **Pacing** konuşma temposunu ayarlar (düşük = daha yavaş ve sakin).
+
+Kurulum. TTS ayrı bir sunucuda, kendi Python ortamında çalışır: Chatterbox'ın sabitlediği torch/transformers sürümleri ComfyUI'ınkiyle çakışır, RTX 50 serisi için de torch'un CUDA 12.8 derlemesi gerekir. Kurulum betiği ikisini de halleder.
+
+```bat
+tts\install.bat
+tts\start.bat
+python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --profile none --video talk
+```
+
+- TTS <http://127.0.0.1:7870> adresinde dinler; model ağırlıkları (~3 GB) ilk istekte Hugging Face'ten iner. Farklı bir adres için `STUDIO_TTS_URL`.
+- TTS GPU'dayken stüdyo seslendirmeden önce ComfyUI'ın modellerini VRAM'den boşaltır: ikisi aynı anda 16 GB'a sığmaz. VRAM'i tamamen ComfyUI'a bırakmak için TTS'i `set TTS_DEVICE=cpu` ile başlat (daha yavaş).
+- Mikrofon kaydı tarayıcıda yalnızca `http://127.0.0.1` / `localhost` ya da HTTPS üzerinden çalışır.
+- 30 sn'den uzun konuşmaları parçalara böl. Her 81 karelik pencere (~3 sn) bir önceki pencerenin son 9 karesiyle devam eder.
+- En iyi sonuç: yüzü ve ağzı net görünen, karşıdan çekilmiş bir kare.
+
+Yalnızca kendi sesini ya da açık izin aldığın birinin sesini klonla. Chatterbox her çıktıya duyulamayan bir yapay zekâ filigranı (Perth) ekler; yayınladığın konuşan videoları da yapay zekâ ile üretildiğini belirterek etiketle.
+
 ## Mimari
 
 ```
 React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI ──► FLUX.2 [klein] · Wan
-                         ├─ SQLite + PNG/MP4 (data/)
+                         ├─ SQLite + PNG/MP4/WAV (data/)
                          ├─ PyAV: video/ses ön işleme
-                         └─ tek GPU iş kuyruğu
+                         ├─ tek GPU iş kuyruğu
+                         └─ HTTP ──► TTS sunucusu (tts/, Chatterbox, ayrı venv)
 ```
 
 | Dosya                         | Görev                                                                             |
@@ -104,13 +138,17 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
 | `backend/studio/video.py`     | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                     |
 | `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                            |
 | `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları          |
-| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion                            |
+| `backend/studio/turkish.py`   | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme           |
+| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync                    |
+| `tts/server.py`               | Chatterbox Multilingual TTS sunucusu (ayrı venv, port 7870)                       |
+| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                      |
 
 ## Geliştirme
 
 ```bash
 cd backend && pip install -e ".[dev]" && pytest
 python -m tests.fake_comfy --port 8188     # GPU'suz sahte ComfyUI (arayüz geliştirme için)
+python -m tests.fake_tts --port 7870       # modelsiz sahte TTS
 STUDIO_DATA_DIR=/tmp/studio python -m studio
 cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 7860
 ```
@@ -123,4 +161,5 @@ cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 786
 ## Yol haritası
 
 - Videodaki bir kişiyi karakterle değiştirme: SCAIL-2 (ComfyUI'da hazır şablonu var)
-- Lipsync + Türkçe ses: Chatterbox Multilingual + InfiniteTalk
+- Var olan bir videoyu dublajlama (video-to-video lipsync): ComfyUI çekirdeğindeki InfiniteTalk şimdilik yalnızca görselden video üretiyor
+- İki kişilik diyalog: InfiniteTalk `two_speakers` modu

@@ -23,6 +23,11 @@ echo Building the web UI...
 call npm run build || (popd & goto :error)
 popd
 
+rem Start the TTS server (Talk page) in its own window when it is installed and not already running.
+if exist "tts\.venv\Scripts\python.exe" (
+  curl -sf http://127.0.0.1:7870/health >nul 2>&1 || start "Influencer Studio TTS" /d "%~dp0tts" ".venv\Scripts\python.exe" server.py
+)
+
 ".venv\Scripts\python.exe" -m studio
 goto :eof
 

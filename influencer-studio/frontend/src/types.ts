@@ -79,6 +79,7 @@ export interface Character {
   reference_ids: string[];
   lora: string;
   lora_strength: number;
+  voice_id: string | null;
   created_at: number;
   image_count?: number;
 }
@@ -96,7 +97,8 @@ export interface Health {
   vram_total?: number;
 }
 
-export type ClipKind = "driver" | "music" | "dance" | "music_dance" | "motion";
+export type MediaKind = "driver" | "music" | "voice" | "speech";
+export type ClipKind = MediaKind | "dance" | "music_dance" | "motion" | "talk";
 
 export interface ClipMeta {
   id: string;
@@ -132,4 +134,16 @@ export interface MotionSchema {
 export interface MotionHealth {
   comfy: boolean;
   modes: Record<"dance" | "music" | "motion" | "smooth", { folder: string; file: string }[]>;
+}
+
+export interface VoiceSchema {
+  languages: Option[];
+  limits: { talk_seconds: number; fps: number; voice_seconds: number };
+  resolutions: Record<Exclude<Orientation, "auto">, { width: number; height: number }>;
+}
+
+export interface VoiceHealth {
+  tts: { ok: boolean; loaded?: boolean; device?: string | null; error?: string | null };
+  comfy: boolean;
+  missing_models: { folder: string; file: string }[];
 }

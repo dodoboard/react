@@ -65,6 +65,7 @@ class UpdateCharacterRequest(BaseModel):
     reference_ids: list[str] | None = None
     lora: str | None = Field(None, max_length=200)  # "" removes the LoRA
     lora_strength: float | None = Field(None, ge=0, le=2)
+    voice_id: str | None = None  # "" removes the voice
 
 
 class IdentityPackRequest(BaseModel):
@@ -145,4 +146,46 @@ class MotionPresetRequest(MotionBase):
             raise ValueError(f"unknown motion preset: {self.preset_id}")
         if not self.preset_id and not self.prompt.strip():
             raise ValueError("choose a motion preset or describe the movement")
+        return self
+
+
+# ── Voice studio ─────────────────────────────────────────────────────────────
+class VoiceSettings(BaseModel):
+    text: str = Field("", max_length=1500)
+    language: str = "tr"
+    voice_id: str | None = None  # defaults to the character's voice, then the built-in one
+    exaggeration: float = Field(0.5, ge=0.25, le=1.5)  # expressiveness
+    cfg_weight: float = Field(0.5, ge=0.0, le=1.0)  # lower = slower, more deliberate delivery
+    temperature: float = Field(0.8, ge=0.3, le=1.5)
+    seed: int | None = Field(None, ge=0, le=2**31)
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, v: str) -> str:
+        from .voice import LANGUAGES
+
+        if v not in LANGUAGES:
+            raise ValueError(f"unsupported language: {v}")
+        return v
+
+
+class SpeakRequest(VoiceSettings):
+    character_id: str | None = None
+
+    @model_validator(mode="after")
+    def _text_required(self) -> SpeakRequest:
+        if not self.text.strip():
+            raise ValueError("write the script to speak")
+        return self
+
+
+class TalkRequest(VoiceSettings, MotionBase):
+    resolution: Literal["480p"] = "480p"  # InfiniteTalk runs on the 480p Wan 2.1 model
+    speech_id: str | None = None  # an existing speech clip instead of `text`
+    prompt: str = Field("", max_length=300)  # expression / setting
+
+    @model_validator(mode="after")
+    def _one_audio_source(self) -> TalkRequest:
+        if bool(self.text.strip()) == bool(self.speech_id):
+            raise ValueError("provide either a script or a speech clip")
         return self

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type MotionCommon } from "../api";
+import { CharacterPicker, SourcePicker, resolveOrientation, sourceImages } from "../components/CharacterSources";
 import { ClipCard, ClipJobView } from "../components/ClipCard";
 import { MediaLibrary, formatSeconds } from "../components/MediaLibrary";
 import { Chip, Empty, ErrorNote, Segmented } from "../components/ui";
@@ -14,14 +15,10 @@ const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: "motion", label: "Motion", hint: "5-second moves from a preset or your own description (Wan 2.2)." },
 ];
 const MUSIC_LENGTHS = [5, 10, 15, 20, 25, 30];
+const MOTION_KINDS: ReadonlySet<string> = new Set(["dance", "music_dance", "motion"]);
 
 function sizeFor(schema: MotionSchema, resolution: Resolution, orientation: Orientation, w: number, h: number) {
-  let o = orientation;
-  if (o === "auto") {
-    const r = h ? w / h : 1;
-    o = r > 1.15 ? "landscape" : r < 0.87 ? "portrait" : "square";
-  }
-  return schema.resolutions[resolution][o];
+  return schema.resolutions[resolution][resolveOrientation(orientation, w, h)];
 }
 
 export function MotionPage({ characterId, navigate }: { characterId?: string; navigate: (path: string) => void }) {
@@ -66,7 +63,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
   const reload = useCallback(() => {
     if (!selected) return;
     api.character(selected.id).then(setDetail, () => {});
-    api.characterClips(selected.id).then(setClips, () => {});
+    api.characterClips(selected.id).then((all) => setClips(all.filter((c) => MOTION_KINDS.has(c.kind))), () => {});
   }, [selected]);
   useEffect(() => {
     setDetail(null);
@@ -75,10 +72,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
     reload();
   }, [reload]);
 
-  const sources = useMemo(
-    () => (detail?.images ?? []).filter((i) => i.kind === "content" || i.kind === "reference"),
-    [detail],
-  );
+  const sources = useMemo(() => sourceImages(detail?.images), [detail]);
   useEffect(() => {
     if (!detail || sourceId) return;
     setSourceId(sources.find((i) => i.kind === "content")?.id ?? detail.portrait_id);
@@ -166,35 +160,9 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
         <div className="panel__scroll">
           <section className="card">
             <div className="card__title">Influencer</div>
-            <div className="avatar-row">
-              {characters.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`avatar${c.id === selected?.id ? " avatar--active" : ""}`}
-                  onClick={() => navigate(`/motion/${c.id}`)}
-                  title={c.name}
-                >
-                  <img src={c.portrait_url} alt={c.name} />
-                  <span>{c.name}</span>
-                </button>
-              ))}
-            </div>
+            <CharacterPicker characters={characters} selectedId={selected?.id} onPick={(id) => navigate(`/motion/${id}`)} />
             <span className="field__label">Start frame</span>
-            <div className="source-row">
-              {sources.map((img) => (
-                <button
-                  key={img.id}
-                  type="button"
-                  className={`source${img.id === sourceId ? " source--active" : ""}`}
-                  onClick={() => setSourceId(img.id)}
-                  aria-pressed={img.id === sourceId}
-                  title={img.caption}
-                >
-                  <img src={img.url} alt={img.caption || "Character image"} loading="lazy" />
-                </button>
-              ))}
-            </div>
+            <SourcePicker images={sources} selectedId={sourceId} onPick={setSourceId} />
             <p className="muted small">Full-body shots from Create move best. The face is taken from this image.</p>
           </section>
 
@@ -204,7 +172,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
 
             {mode === "dance" && (
               <>
-                <MediaLibrary kind="driver" selected={driver} onSelect={setDriver} />
+                <MediaLibrary kind="driver" selectedId={driver?.id ?? null} onSelect={setDriver} />
                 {driver && (
                   <>
                     <label className="field">
@@ -254,7 +222,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
 
             {mode === "music" && (
               <>
-                <MediaLibrary kind="music" selected={music} onSelect={setMusic} />
+                <MediaLibrary kind="music" selectedId={music?.id ?? null} onSelect={setMusic} />
                 {music && (
                   <>
                     <label className="field">
