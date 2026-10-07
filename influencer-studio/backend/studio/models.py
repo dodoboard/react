@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .catalog import ANGLE_BY_ID, ASPECTS, ATTRIBUTE_BY_ID, MAX_AGE, MIN_AGE, PRESET_BY_ID, Level
@@ -91,4 +93,56 @@ class ContentRequest(BaseModel):
             raise ValueError(f"unknown preset: {self.preset_id}")
         if not self.preset_id and not self.prompt.strip():
             raise ValueError("choose a preset or write a prompt")
+        return self
+
+
+# ── Motion studio ────────────────────────────────────────────────────────────
+MAX_DANCE_SECONDS = 20
+MAX_MUSIC_SECONDS = 30
+
+
+class MotionBase(BaseModel):
+    source_image_id: str
+    resolution: Literal["480p", "720p"] = "480p"
+    orientation: Literal["auto", "portrait", "landscape", "square"] = "auto"
+    smooth: bool = False  # FILM interpolation to double the frame rate
+    seed: int | None = Field(None, ge=0, le=2**53)
+
+
+class DanceRequest(MotionBase):
+    driver_id: str
+    start: float = Field(0.0, ge=0)
+    seconds: float = Field(5.0, ge=1, le=MAX_DANCE_SECONDS)
+    pose_strength: float = Field(1.0, ge=0.5, le=1.5)
+    keep_audio: bool = True
+
+
+class MusicDanceRequest(MotionBase):
+    music_id: str
+    start: float = Field(0.0, ge=0)
+    seconds: int = Field(10, ge=5, le=MAX_MUSIC_SECONDS)
+    style: Literal["kpop", "street", "latin", "tap", "classical"] = "kpop"
+    energy: Literal["low", "medium", "high", "max"] = "medium"
+    quality: bool = False  # 25-step global pass instead of the 6-step lightx2v one
+
+    @field_validator("seconds")
+    @classmethod
+    def _five_second_segments(cls, v: int) -> int:
+        if v % 5:
+            raise ValueError("seconds must be a multiple of 5")
+        return v
+
+
+class MotionPresetRequest(MotionBase):
+    preset_id: str | None = None
+    prompt: str = Field("", max_length=500)
+
+    @model_validator(mode="after")
+    def _action_required(self) -> MotionPresetRequest:
+        from .video import MOTION_PRESET_BY_ID
+
+        if self.preset_id is not None and self.preset_id not in MOTION_PRESET_BY_ID:
+            raise ValueError(f"unknown motion preset: {self.preset_id}")
+        if not self.preset_id and not self.prompt.strip():
+            raise ValueError("choose a motion preset or describe the movement")
         return self

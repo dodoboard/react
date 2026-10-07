@@ -60,12 +60,12 @@ export interface ImageMeta {
   url: string;
 }
 
-export interface Job {
+export interface Job<T = ImageMeta> {
   id: string;
   kind: string;
   status: "queued" | "running" | "done" | "error";
   progress: number;
-  images: ImageMeta[];
+  outputs: T[];
   error: string | null;
   queue_position: number | null;
 }
@@ -94,4 +94,42 @@ export interface Health {
   missing_models: { folder: string; file: string }[];
   gpu?: string;
   vram_total?: number;
+}
+
+export type ClipKind = "driver" | "music" | "dance" | "music_dance" | "motion";
+
+export interface ClipMeta {
+  id: string;
+  character_id: string | null;
+  kind: ClipKind;
+  ext: string;
+  name: string;
+  caption: string;
+  prompt: string;
+  seed: number | null;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  has_audio: boolean;
+  source_image_id: string | null;
+  created_at: number;
+  url: string;
+  media_type: string;
+}
+
+export type Resolution = "480p" | "720p";
+export type Orientation = "auto" | "portrait" | "landscape" | "square";
+
+export interface MotionSchema {
+  resolutions: Record<Resolution, Record<Exclude<Orientation, "auto">, { width: number; height: number }>>;
+  styles: Option[];
+  energies: Option[];
+  presets: Option[];
+  limits: { dance_seconds: number; music_seconds: number; fps: number };
+}
+
+export interface MotionHealth {
+  comfy: boolean;
+  modes: Record<"dance" | "music" | "motion" | "smooth", { folder: string; file: string }[]>;
 }

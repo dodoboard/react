@@ -37,7 +37,30 @@ CREATE TABLE IF NOT EXISTS images (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS images_by_character ON images(character_id, created_at);
+CREATE TABLE IF NOT EXISTS clips (
+    id TEXT PRIMARY KEY,
+    character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,          -- driver | music (uploads) | dance | music_dance | motion
+    ext TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    caption TEXT NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL DEFAULT '',
+    seed INTEGER,
+    width INTEGER NOT NULL DEFAULT 0,
+    height INTEGER NOT NULL DEFAULT 0,
+    fps REAL NOT NULL DEFAULT 0,
+    duration REAL NOT NULL DEFAULT 0,
+    has_audio INTEGER NOT NULL DEFAULT 0,
+    source_image_id TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS clips_by_character ON clips(character_id, created_at);
 """
+
+_MEDIA_TYPES = {
+    "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/mp4", "webm": "video/webm", "mkv": "video/x-matroska",
+    "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "aac": "audio/aac", "ogg": "audio/ogg", "flac": "audio/flac",
+}
 
 
 def _new_id() -> str:
@@ -47,7 +70,9 @@ def _new_id() -> str:
 class Store:
     def __init__(self, root: Path):
         self.images_dir = root / "images"
-        self.images_dir.mkdir(parents=True, exist_ok=True)
+        self.clips_dir = root / "clips"
+        for d in (self.images_dir, self.clips_dir):
+            d.mkdir(parents=True, exist_ok=True)
         # One connection shared by the event loop and FastAPI's threadpool: every access
         # goes through the lock, since sqlite3 connections are not safe for concurrent use.
         self._lock = threading.Lock()
@@ -113,6 +138,51 @@ class Store:
         self._write(("DELETE FROM images WHERE id = ?", (image_id,)))
         self.image_path(image_id).unlink(missing_ok=True)
 
+    # ── clips (videos and audio) ────────────────────────────────────────────
+    def clip_path(self, clip: dict) -> Path:
+        return self.clips_dir / f"{clip['id']}.{clip['ext']}"
+
+    def save_clip(
+        self,
+        src: Path,
+        *,
+        kind: str,
+        ext: str,
+        info: dict,
+        name: str = "",
+        caption: str = "",
+        prompt: str = "",
+        seed: int | None = None,
+        character_id: str | None = None,
+        source_image_id: str | None = None,
+    ) -> dict:
+        """Moves `src` into the store. `info` is a MediaInfo.public() dict."""
+        clip_id = _new_id()
+        src.replace(self.clips_dir / f"{clip_id}.{ext}")
+        self._write((
+            "INSERT INTO clips VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (clip_id, character_id, kind, ext, name, caption, prompt, seed, info["width"], info["height"],
+             info["fps"], info["duration"], int(info["has_audio"]), source_image_id, time.time()),
+        ))
+        return self.clip(clip_id)  # type: ignore[return-value]
+
+    def clip(self, clip_id: str) -> dict | None:
+        rows = self._read("SELECT * FROM clips WHERE id = ?", (clip_id,))
+        return _clip_row(rows[0]) if rows else None
+
+    def clips(self, *, character_id: str | None = None, kinds: tuple[str, ...] = ()) -> list[dict]:
+        sql, args = "SELECT * FROM clips WHERE 1=1", []
+        if character_id:
+            sql, args = sql + " AND character_id = ?", [*args, character_id]
+        if kinds:
+            sql, args = sql + f" AND kind IN ({','.join('?' * len(kinds))})", [*args, *kinds]
+        return [_clip_row(r) for r in self._read(sql + " ORDER BY created_at DESC", args)]
+
+    def delete_clip(self, clip_id: str) -> None:
+        if clip := self.clip(clip_id):
+            self._write(("DELETE FROM clips WHERE id = ?", (clip_id,)))
+            self.clip_path(clip).unlink(missing_ok=True)
+
     # ── characters ──────────────────────────────────────────────────────────
     def create_character(self, name: str, spec: dict, portrait_id: str) -> dict:
         character_id = _new_id()
@@ -159,14 +229,25 @@ class Store:
 
     def delete_character(self, character_id: str) -> None:
         image_ids = [r["id"] for r in self._read("SELECT id FROM images WHERE character_id = ?", (character_id,))]
+        clips = self.clips(character_id=character_id)
         self._write(("DELETE FROM characters WHERE id = ?", (character_id,)))
         for image_id in image_ids:
             self.image_path(image_id).unlink(missing_ok=True)
+        for clip in clips:
+            self.clip_path(clip).unlink(missing_ok=True)
 
 
 def _image_row(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["url"] = f"/api/images/{d['id']}"
+    return d
+
+
+def _clip_row(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["has_audio"] = bool(d["has_audio"])
+    d["url"] = f"/api/clips/{d['id']}"
+    d["media_type"] = _MEDIA_TYPES.get(d["ext"], "application/octet-stream")
     return d
 
 

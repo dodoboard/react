@@ -1,6 +1,6 @@
 # Influencer Studio · FLUX.2 (lokal)
 
-Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde **FLUX.2 [klein]** ile çalışır; görseller ve karakterler bilgisayarından çıkmaz.
+Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde görseller için **FLUX.2 [klein]**, dans ve hareket videoları için **Wan** modelleriyle çalışır; görseller, videolar ve karakterler bilgisayarından çıkmaz.
 
 | Higgsfield                        | Influencer Studio                                                                  |
 | --------------------------------- | ---------------------------------------------------------------------------------- |
@@ -9,7 +9,7 @@ Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde **FL
 | Soul ID                           | Kimlik paketi (8 açı) + en fazla 4 tutarlılık referansı, istersen karakter LoRA'sı |
 | İçerik üretimi                    | Create: 15 sahne preset'i + serbest prompt, referanslarla aynı yüz                 |
 | –                                 | LoRA veri seti dışa aktarma (ai-toolkit config'iyle)                               |
-| Motion (Genjutsu)                 | Yok: FLUX.2 bir görsel modeli. Bkz. [Yol haritası](#yol-haritası)                  |
+| Motion (Genjutsu)                 | Motion: dans aktarımı, müzikle dans, hareket şablonları. Bkz. [Motion](#motion)    |
 
 ## Gereksinimler
 
@@ -26,7 +26,9 @@ Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde **FL
    python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI
    ```
 
-3. `start.bat` → <http://127.0.0.1:7860>. İlk çalıştırmada Python ortamını ve arayüzü kendisi kurar.
+   Video modelleri ayrıca, kullanacağın modlara göre indirilir (bkz. [Motion](#motion)).
+
+3. `start.bat` → <http://127.0.0.1:7860>. Python ortamını ve arayüzü kendisi kurar; `git pull` sonrası değişen bağımlılıkları da yeniden kurar.
 4. Uçtan uca kontrol (512 px deneme render'ı):
 
    ```bat
@@ -54,11 +56,41 @@ Diğer ayarlar: `STUDIO_COMFY_URL` (varsayılan `http://127.0.0.1:8188`), `STUDI
 3. **Create**: preset seç veya sahneyi yaz. Her üretimde referanslar FLUX.2'ye `ReferenceLatent` olarak verilir.
 4. **Daha güçlü tutarlılık**: **Export LoRA dataset** → zip'teki `train_flux2_klein_4b.yaml` ile [ai-toolkit](https://github.com/ostris/ai-toolkit)'te eğit → `.safetensors` dosyasını `ComfyUI/models/loras/` içine koy → karakter sayfasında seç.
 
+## Motion
+
+Karakterin bir görselinden (tercihen Create'te üretilmiş tam boy bir kare) video üretir. Üç mod var:
+
+| Mod             | Ne yapar                                                                        | Model                           | Süre                   |
+| --------------- | ------------------------------------------------------------------------------- | ------------------------------- | ---------------------- |
+| **Dance video** | Yüklediğin dans klibindeki hareketi ve kamerayı karakterine aktarır, sesi korur | Wan-Animate-2 Distilled (int8)  | 1–20 sn, 16 fps        |
+| **Music dance** | Şarkının ritminden koreografi üretir: K-Pop, Street, Latin, Tap, Klasik         | Wan-Dancer-14B (global + local) | 5–30 sn, 30 fps, sesli |
+| **Motion**      | 12 hazır hareket (dans, saç savurma, podyum, dönüş...) veya kendi tarifin       | Wan 2.2 I2V A14B + 4 adım LoRA  | 5 sn, 16 fps           |
+
+İsteğe bağlı **Smooth motion**, FILM kare ara doldurmasıyla fps'i ikiye katlar. Wan-Animate-2, Wan-Dancer ve Wan 2.2 Apache-2.0 lisanslı.
+
+Modelleri indir (ortak dosyalar bir kez iner; yaklaşık dance 25 GB, music 38 GB, motion 37 GB, smooth 0,1 GB):
+
+```bat
+python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --profile none --video dance,smooth
+python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --profile none --video all
+```
+
+Dans klibi backend'de ön işlenir: seçilen aralık kesilir, 16 fps'e indirilir, hedef boyuta kırpılır, telefon videolarındaki döndürme düzeltilir ve müzik ayrı bir WAV olarak çıkarılır. ComfyUI'a yalnızca bu küçük dosya gider; ham 1080p/60 fps klip 32 GB RAM'i doldururdu. 5 sn'den uzun danslar, 81 karelik pencerelerin `continue_motion` ile zincirlenmesiyle üretilir.
+
+**16 GB VRAM / 32 GB RAM için:**
+
+- ComfyUI'ı `--fast-disk` ile başlat; 14B modeller VRAM'e sığmaz, ComfyUI parçaları diskten akıtır.
+- 480p'de üret, gerekirse ayrıca büyüt. 720p yaklaşık iki kat süre ve bellek ister.
+- Wan-Animate-2'nin poz önbelleği üretimi yaklaşık yarıya indirir ve sistem RAM'inde durur: `STUDIO_POSE_CACHE=int4` (varsayılan, ~3 GB), `int8` (~6 GB) veya `off`.
+- Referans hız: ComfyUI'ın Wan 2.2 şablonundaki ölçüm, RTX 4090D'de 640×640 ve 4 adımla klip başına ~70–100 sn. Laptop GPU'sunda daha uzun sürer.
+- Dans klibi: tek kişi, tam boy, sabit kamera en iyi sonucu verir. Yalnızca hakkına sahip olduğun klipleri kullan.
+
 ## Mimari
 
 ```
-React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI ──► FLUX.2 [klein]
-                         ├─ SQLite + PNG (data/)
+React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI ──► FLUX.2 [klein] · Wan
+                         ├─ SQLite + PNG/MP4 (data/)
+                         ├─ PyAV: video/ses ön işleme
                          └─ tek GPU iş kuyruğu
 ```
 
@@ -69,7 +101,10 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
 | `backend/studio/flux2.py`     | Model profilleri + ComfyUI API grafı (ComfyUI'ın resmi FLUX.2 şablonlarıyla aynı) |
 | `backend/studio/comfy.py`     | ComfyUI istemcisi: upload, `/prompt`, `/ws` ilerleme, `/history`                  |
 | `backend/studio/service.py`   | Builder, karakter, kimlik paketi, içerik, veri seti                               |
-| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create                                    |
+| `backend/studio/video.py`     | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                     |
+| `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                            |
+| `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları          |
+| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion                            |
 
 ## Geliştirme
 
@@ -87,5 +122,5 @@ cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 786
 
 ## Yol haritası
 
-- Motion sekmesi: Wan-Animate-2 / SCAIL-2 ile hareket aktarımı (ComfyUI'da hazır şablonları var)
+- Videodaki bir kişiyi karakterle değiştirme: SCAIL-2 (ComfyUI'da hazır şablonu var)
 - Lipsync + Türkçe ses: Chatterbox Multilingual + InfiniteTalk

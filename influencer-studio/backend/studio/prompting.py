@@ -141,3 +141,26 @@ def scene_prompt(spec: CharacterSpec, scene: str, extra: str = "") -> str:
 
 def angle_prompt(spec: CharacterSpec, angle: Angle) -> str:
     return scene_prompt(spec, angle.scene)
+
+
+def _who(spec: CharacterSpec) -> dict[str, str]:
+    return {
+        "woman": {"who": "the woman", "their": "her", "them": "her"},
+        "man": {"who": "the man", "their": "his", "them": "him"},
+    }.get(_selected_id(spec, "gender") or "", {"who": "the person", "their": "their", "them": "them"})
+
+
+def _subject_line(spec: CharacterSpec) -> str:
+    who = subject(spec) + (f" with {h}" if (h := hair(spec)) else "")
+    return who[:1].upper() + who[1:] + "."
+
+
+def dance_prompt(spec: CharacterSpec) -> str:
+    return (f"{_subject_line(spec)} Dancing with expressive full-body movement. "
+            "Consistent face, hair and outfit, sharp details, natural lighting.")
+
+
+def motion_prompt(spec: CharacterSpec, action: str) -> str:
+    action = action.format(**_who(spec)) if "{" in action else action
+    return (f"{_subject_line(spec)} {_sentence(action)} "
+            "Smooth natural motion, realistic physics, consistent face and outfit, high quality.")

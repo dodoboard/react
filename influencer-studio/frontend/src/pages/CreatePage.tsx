@@ -168,7 +168,7 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
             aspect={ratio(j.aspect)}
             onOpen={setLightbox}
             onDone={(job) => {
-              setShownInJobs((prev) => new Set([...prev, ...job.images.map((i) => i.id)]));
+              setShownInJobs((prev) => new Set([...prev, ...job.outputs.map((i) => i.id)]));
               loadRecent();
             }}
           />

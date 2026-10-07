@@ -20,7 +20,7 @@ class Job:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     status: Status = "queued"
     progress: float = 0.0
-    images: list[dict] = field(default_factory=list)
+    outputs: list[dict] = field(default_factory=list)  # saved images or clips
     error: str | None = None
     created_at: float = field(default_factory=time.time)
 
@@ -30,7 +30,7 @@ class Job:
             "kind": self.kind,
             "status": self.status,
             "progress": round(self.progress, 3),
-            "images": self.images,
+            "outputs": self.outputs,
             "error": self.error,
             "queue_position": position,
         }
@@ -66,7 +66,7 @@ class JobQueue:
             job, fn = await self._queue.get()
             job.status = "running"
             try:
-                job.images = await fn(job)
+                job.outputs = await fn(job)
                 job.status = "done"
             except Exception as e:  # surfaced to the UI
                 log.exception("job %s failed", job.id)

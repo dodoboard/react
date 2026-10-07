@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import uuid
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence
 
 import httpx
 from websockets.asyncio.client import connect
@@ -18,7 +19,9 @@ class ComfyError(RuntimeError):
 
 class ComfyBackend(Protocol):
     async def upload(self, data: bytes, filename: str) -> str: ...
-    async def run(self, graph: dict, on_progress: ProgressFn | None = None) -> list[bytes]: ...
+    async def run(
+        self, graph: dict, on_progress: ProgressFn | None = None, progress_nodes: Sequence[str] = ()
+    ) -> list[bytes]: ...
     async def models(self, folder: str) -> list[str]: ...
     async def system_stats(self) -> dict: ...
     async def aclose(self) -> None: ...
@@ -55,14 +58,22 @@ class ComfyClient:
     async def upload(self, data: bytes, filename: str) -> str:
         r = await self._http.post(
             "/upload/image",
-            files={"image": (filename, data, "image/png")},
+            files={"image": (filename, data, mimetypes.guess_type(filename)[0] or "application/octet-stream")},
             data={"overwrite": "true", "type": "input"},
         )
         r.raise_for_status()
         j = r.json()
         return f"{j['subfolder']}/{j['name']}" if j.get("subfolder") else j["name"]
 
-    async def run(self, graph: dict, on_progress: ProgressFn | None = None) -> list[bytes]:
+    async def run(
+        self, graph: dict, on_progress: ProgressFn | None = None, progress_nodes: Sequence[str] = ()
+    ) -> list[bytes]:
+        """Queue `graph`, stream progress, return the output files (PNG images or MP4 videos).
+
+        With `progress_nodes` (sampler node ids in execution order) progress is reported across
+        all of them, so multi-pass video graphs move 0→1 once instead of once per sampler.
+        """
+        order = {node_id: i for i, node_id in enumerate(progress_nodes)}
         # Connect before queueing so no event for this prompt can be missed.
         async with connect(f"{self.ws_url}?clientId={self.client_id}", max_size=None, ping_interval=None) as ws:
             r = await self._http.post("/prompt", json={"prompt": graph, "client_id": self.client_id})
@@ -78,7 +89,12 @@ class ComfyClient:
                     continue
                 kind = msg.get("type")
                 if kind == "progress" and on_progress and data.get("max"):
-                    on_progress(data["value"] / data["max"])
+                    fraction = data["value"] / data["max"]
+                    if order:
+                        if str(data.get("node")) not in order:
+                            continue
+                        fraction = (order[str(data["node"])] + fraction) / len(order)
+                    on_progress(fraction)
                 elif kind == "execution_error":
                     raise ComfyError(f"{data.get('node_type')}: {data.get('exception_message', '').strip()}")
                 elif kind == "execution_interrupted":

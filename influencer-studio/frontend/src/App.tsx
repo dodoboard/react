@@ -5,12 +5,14 @@ import { BuilderPage } from "./pages/BuilderPage";
 import { CharacterPage } from "./pages/CharacterPage";
 import { CharactersPage } from "./pages/CharactersPage";
 import { CreatePage } from "./pages/CreatePage";
+import { MotionPage } from "./pages/MotionPage";
 import type { Health, Schema } from "./types";
 
 const NAV = [
   { path: "builder", label: "Builder" },
   { path: "characters", label: "Influencers" },
   { path: "create", label: "Create" },
+  { path: "motion", label: "Motion" },
 ];
 
 function HealthPill({ health }: { health: Health | null }) {
@@ -80,6 +82,8 @@ export function App() {
       <CharactersPage />
     ) : section === "create" ? (
       <CreatePage characterId={param} navigate={navigate} />
+    ) : section === "motion" ? (
+      <MotionPage characterId={param} navigate={navigate} />
     ) : (
       <BuilderPage navigate={navigate} />
     );

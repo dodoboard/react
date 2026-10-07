@@ -10,6 +10,7 @@ dependencies = [
     "websockets>=14",
     "pillow>=10",
     "python-multipart>=0.0.9",
+    "av>=14",
 ]
 
 [project.optional-dependencies]

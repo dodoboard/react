@@ -7,16 +7,21 @@ if not exist ".venv\Scripts\python.exe" (
   echo Creating Python environment...
   py -3.12 -m venv .venv 2>nul || python -m venv .venv || goto :error
   ".venv\Scripts\python.exe" -m pip install --upgrade pip || goto :error
+)
+rem Reinstall backend dependencies whenever backend\pyproject.toml changes (e.g. after git pull).
+fc /b "backend\pyproject.toml" ".venv\pyproject.installed" >nul 2>&1 || (
   ".venv\Scripts\python.exe" -m pip install -e backend || goto :error
+  copy /y "backend\pyproject.toml" ".venv\pyproject.installed" >nul
 )
 
-if not exist "frontend\dist\index.html" (
-  echo Building the web UI...
-  pushd frontend
-  call npm install || goto :error
-  call npm run build || goto :error
-  popd
+pushd frontend
+fc /b "package-lock.json" "node_modules\.lock.installed" >nul 2>&1 || (
+  call npm install || (popd & goto :error)
+  copy /y "package-lock.json" "node_modules\.lock.installed" >nul
 )
+echo Building the web UI...
+call npm run build || (popd & goto :error)
+popd
 
 ".venv\Scripts\python.exe" -m studio
 goto :eof

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 from typing import AsyncIterator
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -13,15 +13,17 @@ from .comfy import ComfyBackend, ComfyClient
 from .flux2 import PROFILES
 from .jobs import JobQueue
 from .models import (
-    BuilderRequest, ContentRequest, CreateCharacterRequest, IdentityPackRequest,
-    PromptPreviewRequest, UpdateCharacterRequest,
+    BuilderRequest, ContentRequest, CreateCharacterRequest, DanceRequest, IdentityPackRequest,
+    MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, UpdateCharacterRequest,
 )
+from .motion import MotionStudio, new_upload_path, public_schema
 from .prompting import character_prompt
 from .service import Invalid, NotFound, Studio
 from .settings import Settings
 from .store import Store
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_MEDIA_BYTES = 500 * 1024 * 1024
 
 
 def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = None) -> FastAPI:
@@ -32,6 +34,10 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     store = Store(settings.data_dir)
     jobs = JobQueue()
     studio = Studio(PROFILES[settings.profile], comfy, store, jobs)
+    if settings.pose_cache not in ("off", "int4", "int8", "default"):
+        raise SystemExit("STUDIO_POSE_CACHE must be off, int4, int8 or default")
+    motion = MotionStudio(comfy, store, jobs, settings.data_dir / "work",
+                          None if settings.pose_cache == "off" else settings.pose_cache)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -133,6 +139,62 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     @app.delete("/api/images/{image_id}", status_code=204)
     def delete_image(image_id: str) -> Response:
         studio.delete_image(image_id)
+        return Response(status_code=204)
+
+    # ── Motion studio ───────────────────────────────────────────────────────
+    @app.get("/api/motion/schema")
+    def motion_schema() -> dict:
+        return public_schema()
+
+    @app.get("/api/motion/health")
+    async def motion_health() -> dict:
+        return await motion.health()
+
+    @app.post("/api/motion/uploads", status_code=201)
+    async def motion_upload(kind: str = Query(...), file: UploadFile = File(...)) -> dict:
+        tmp = new_upload_path(motion.work_dir, file.filename or "upload")
+        size = 0
+        try:
+            with tmp.open("wb") as f:  # stream to disk: dance clips can be hundreds of MB
+                while chunk := await file.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_MEDIA_BYTES:
+                        raise HTTPException(413, "file larger than 500 MB")
+                    f.write(chunk)
+            return motion.save_upload(kind, file.filename or tmp.name, tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    @app.get("/api/motion/uploads")
+    def motion_uploads(kind: str = Query(...)) -> list[dict]:
+        return motion.uploads(kind)
+
+    @app.post("/api/characters/{character_id}/motion/dance")
+    async def motion_dance(character_id: str, req: DanceRequest) -> dict:
+        return job_response(motion.dance(character_id, req))
+
+    @app.post("/api/characters/{character_id}/motion/music")
+    async def motion_music(character_id: str, req: MusicDanceRequest) -> dict:
+        return job_response(motion.music_dance(character_id, req))
+
+    @app.post("/api/characters/{character_id}/motion/preset")
+    async def motion_preset(character_id: str, req: MotionPresetRequest) -> dict:
+        return job_response(motion.motion(character_id, req))
+
+    @app.get("/api/characters/{character_id}/clips")
+    def character_clips(character_id: str) -> list[dict]:
+        return motion.clips(character_id)
+
+    @app.get("/api/clips/{clip_id}")
+    def clip_file(clip_id: str) -> FileResponse:
+        if not (clip := store.clip(clip_id)):
+            raise HTTPException(404, "clip not found")
+        return FileResponse(store.clip_path(clip), media_type=clip["media_type"],
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.delete("/api/clips/{clip_id}", status_code=204)
+    def delete_clip(clip_id: str) -> Response:
+        motion.delete_clip(clip_id)
         return Response(status_code=204)
 
     if settings.frontend_dist.is_dir():

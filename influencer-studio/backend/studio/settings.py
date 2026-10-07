@@ -19,3 +19,5 @@ class Settings:
     host: str = field(default_factory=lambda: _env("HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(_env("PORT", "7860")))
     frontend_dist: Path = field(default_factory=lambda: PROJECT_ROOT / "frontend" / "dist")
+    # Wan-Animate-2 pose cache kept in system RAM: int4 (~3 GB at 480p), int8 (~6 GB), default, or off.
+    pose_cache: str = field(default_factory=lambda: _env("POSE_CACHE", "int4"))

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { Health, Job, Schema } from "./types";
+import type { Health, ImageMeta, Job, Schema } from "./types";
 
 export interface StudioContextValue {
   schema: Schema;
@@ -17,8 +17,8 @@ export function useStudio(): StudioContextValue {
 }
 
 /** Polls a job until it finishes; `onDone` fires once with the final state. */
-export function useJob(jobId: string | null, onDone?: (job: Job) => void): Job | null {
-  const [job, setJob] = useState<Job | null>(null);
+export function useJob<T = ImageMeta>(jobId: string | null, onDone?: (job: Job<T>) => void): Job<T> | null {
+  const [job, setJob] = useState<Job<T> | null>(null);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
@@ -28,7 +28,7 @@ export function useJob(jobId: string | null, onDone?: (job: Job) => void): Job |
     let timer: number | undefined;
     const tick = async () => {
       try {
-        const next = await api.job(jobId);
+        const next = await api.job<T>(jobId);
         if (cancelled) return;
         setJob(next);
         if (next.status === "done" || next.status === "error") {

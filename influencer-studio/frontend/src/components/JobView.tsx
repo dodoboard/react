@@ -35,7 +35,7 @@ export function JobView(props: {
       {job?.status === "error" && <ErrorNote message={job.error} />}
       <div className={`grid${props.compact ? " grid--compact" : ""}`}>
         {finished
-          ? job.images.map((img) => (
+          ? job.outputs.map((img) => (
               <ImageTile key={img.id} image={img} onOpen={() => props.onOpen(img)} actions={props.actions?.(img)} />
             ))
           : job?.status !== "error" &&

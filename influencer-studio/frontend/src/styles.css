@@ -748,6 +748,148 @@ input[type="range"] {
   border-color: var(--accent);
 }
 
+/* ── motion studio ───────────────────────────────────────────────────── */
+.source-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.source {
+  flex: none;
+  width: 64px;
+  height: 80px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--raised);
+  cursor: pointer;
+}
+.source img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.source--active {
+  border-color: var(--accent);
+}
+.media-library {
+  display: grid;
+  gap: 8px;
+}
+.media-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.media-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding-right: 6px;
+  background: var(--raised);
+}
+.media-list li.is-active {
+  border-color: var(--accent);
+}
+.media-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.media-item video,
+.media-item__icon {
+  width: 44px;
+  height: 56px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #000;
+}
+.media-item__icon {
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  color: var(--accent);
+  background: var(--card);
+}
+.media-item__meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.media-item__meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.media-preview {
+  width: 100%;
+  height: 36px;
+}
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.clip {
+  margin: 0;
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+.clip video {
+  width: 100%;
+  display: block;
+  background: #000;
+  max-height: 70vh;
+}
+.clip figcaption {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px 12px;
+}
+.clip__badge {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.clip__caption {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-pending {
+  max-width: 320px;
+  border-radius: var(--radius);
+}
+
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: 1fr;
