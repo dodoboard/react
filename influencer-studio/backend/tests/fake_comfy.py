@@ -4,7 +4,8 @@
 
 Validates graph links like ComfyUI does, streams progress over /ws and returns placeholder
 PNGs sized from EmptyFlux2LatentImage, or a placeholder MP4 (with a tone when the graph
-attaches audio) for SaveVideo graphs.
+attaches audio) for SaveVideo graphs. Image-to-image FLUX.2 graphs return a solid IMG2IMG_COLOR
+square; upscale graphs really resize their input image or video.
 """
 
 from __future__ import annotations
@@ -53,7 +54,10 @@ KNOWN_NODES = {
     "WanDancerVideo", "LatentCutToBatch", "WanDancerPadKeyframesList", "ConditioningZeroOut", "RebatchImages",
     "WanImageToVideo", "KSamplerAdvanced", "FrameInterpolationModelLoader", "FrameInterpolate", "CreateVideo",
     "SaveVideo", "ModelPatchLoader", "AudioEncoderLoader", "AudioEncoderEncode", "WanInfiniteTalkToVideo",
+    # quality
+    "UpscaleModelLoader", "ImageUpscaleWithModel", "ImageScaleBy", "SplitSigmasDenoise",
 }
+IMG2IMG_COLOR = (200, 40, 160)
 _MODEL_INPUTS = {
     ("UNETLoader", "unet_name"): "diffusion_models",
     ("CLIPLoader", "clip_name"): "text_encoders",
@@ -63,6 +67,7 @@ _MODEL_INPUTS = {
     ("FrameInterpolationModelLoader", "model_name"): "frame_interpolation",
     ("ModelPatchLoader", "name"): "model_patches",
     ("AudioEncoderLoader", "audio_encoder_name"): "audio_encoders",
+    ("UpscaleModelLoader", "model_name"): "upscale_models",
 }
 _INPUT_FILES = {("LoadImage", "image"), ("LoadVideo", "file"), ("LoadAudio", "audio")}
 _SAMPLERS = {"SamplerCustom", "SamplerCustomAdvanced", "KSamplerAdvanced"}
@@ -101,6 +106,26 @@ def _placeholder_video(width: int, height: int, label: str, fps: int, with_audio
                     out.mux(packet)
             for packet in audio.encode():
                 out.mux(packet)
+    return buf.getvalue()
+
+
+def _resize_video(data: bytes, width: int, height: int) -> bytes:
+    """Every frame of an MP4 resized, same rate and frame count (the fake Real-ESRGAN pass)."""
+    buf = io.BytesIO()
+    with av.open(io.BytesIO(data)) as inp, av.open(buf, "w", format="mp4") as out:
+        enc = out.add_stream("libx264", rate=inp.streams.video[0].average_rate)
+        enc.width, enc.height, enc.pix_fmt = width, height, "yuv420p"
+        for frame in inp.decode(video=0):
+            for packet in enc.encode(av.VideoFrame.from_image(frame.to_image().resize((width, height)))):
+                out.mux(packet)
+        for packet in enc.encode():
+            out.mux(packet)
+    return buf.getvalue()
+
+
+def _png(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -185,12 +210,36 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
 
     async def execute(prompt_id: str, client_id: str, graph: dict) -> None:
         ws = clients.get(client_id)
+        # like ComfyUI 0.39: LoadVideo reports its input file as a UI output next to the real outputs
+        echoes = {node_id: {"images": [{"filename": n["inputs"]["file"], "subfolder": "", "type": "input"}],
+                            "animated": [True]}
+                  for node_id, n in graph.items() if n["class_type"] == "LoadVideo"}
 
         async def send(kind: str, data: dict) -> None:
             if ws:
                 await ws.send_json({"type": kind, "data": data | {"prompt_id": prompt_id}})
 
         await send("execution_start", {})
+        nodes = {n["class_type"]: n["inputs"] for n in graph.values()}
+        if "ImageUpscaleWithModel" in nodes and "SaveVideo" in nodes:  # HD video chunk
+            await send("progress", {"value": 1, "max": 1, "node": "upscale"})
+            size = nodes["ImageScale"]
+            name = f"fake_{prompt_id}.mp4"
+            outputs[name] = await asyncio.to_thread(_resize_video, inputs[nodes["LoadVideo"]["file"]],
+                                                    size["width"], size["height"])
+            history[prompt_id] = {"outputs": {**echoes, "99": {"images": [{"filename": name, "subfolder": "", "type": "output"}],
+                                                                "animated": [True]}}}
+            await send("executing", {"node": None})
+            return
+        if "ImageUpscaleWithModel" in nodes:  # HD image: 4x, then ImageScaleBy
+            await send("progress", {"value": 1, "max": 1, "node": "upscale"})
+            img = Image.open(io.BytesIO(inputs[nodes["LoadImage"]["image"]]))
+            factor = 4 * nodes["ImageScaleBy"]["scale_by"]
+            name = f"fake_{prompt_id}.png"
+            outputs[name] = _png(img.resize((round(img.width * factor), round(img.height * factor))))
+            history[prompt_id] = {"outputs": {"99": {"images": [{"filename": name, "subfolder": "", "type": "temp"}]}}}
+            await send("executing", {"node": None})
+            return
         if any(n["class_type"] == "SaveVideo" for n in graph.values()):
             for node_id in [i for i, n in graph.items() if n["class_type"] in _SAMPLERS]:
                 for step in range(1, 5):
@@ -204,12 +253,14 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
                 _placeholder_video, size["width"], size["height"], label, int(create["fps"]), "audio" in create,
                 2 * int(create["fps"]),
             )
-            history[prompt_id] = {"outputs": {"99": {"images": [{"filename": name, "subfolder": "", "type": "output"}],
-                                                      "animated": [True]}}}
+            history[prompt_id] = {"outputs": {**echoes, "99": {"images": [{"filename": name, "subfolder": "", "type": "output"}],
+                                                                "animated": [True]}}}
             await send("executing", {"node": None})
             return
-        latent = next(n["inputs"] for n in graph.values() if n["class_type"] == "EmptyFlux2LatentImage")
-        steps = next(n["inputs"]["steps"] for n in graph.values() if n["class_type"] == "Flux2Scheduler")
+        img2img = "EmptyFlux2LatentImage" not in nodes
+        scheduler = nodes["Flux2Scheduler"]
+        latent = {**scheduler, "batch_size": 1} if img2img else nodes["EmptyFlux2LatentImage"]
+        steps = scheduler["steps"]
         text = next(n["inputs"]["text"] for n in graph.values() if n["class_type"] == "CLIPTextEncode")
         seed = next(n["inputs"]["noise_seed"] for n in graph.values() if n["class_type"] == "RandomNoise")
         refs = sum(n["class_type"] == "LoadImage" for n in graph.values())
@@ -220,7 +271,8 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
         for i in range(latent["batch_size"]):
             name = f"fake_{prompt_id}_{i}.png"
             label = f"FLUX.2 fake render · refs={refs} · seed={seed}\n{text}"
-            outputs[name] = _placeholder(latent["width"], latent["height"], label, f"{text}{seed}{i}")
+            outputs[name] = (_png(Image.new("RGB", (latent["width"], latent["height"]), IMG2IMG_COLOR)) if img2img
+                             else _placeholder(latent["width"], latent["height"], label, f"{text}{seed}{i}"))
             images.append({"filename": name, "subfolder": "", "type": "temp"})
         history[prompt_id] = {"outputs": {"99": {"images": images}}}
         await send("executing", {"node": None})
@@ -241,7 +293,8 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
 
     @app.get("/view")
     def view(filename: str, subfolder: str = "", type: str = "output") -> Response:
-        return Response(outputs[filename], media_type="video/mp4" if filename.endswith(".mp4") else "image/png")
+        data = inputs[filename] if type == "input" else outputs[filename]
+        return Response(data, media_type="video/mp4" if filename.endswith(".mp4") else "image/png")
 
     return app
 

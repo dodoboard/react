@@ -27,7 +27,10 @@ export function ClipCard({ clip, actions }: { clip: ClipMeta; actions?: ReactNod
         />
       )}
       <figcaption>
-        <span className="clip__badge">{KIND_LABEL[clip.kind] ?? clip.kind}</span>
+        <span className="clip__badge">
+          {KIND_LABEL[clip.kind] ?? clip.kind}
+          {clip.meta?.hd ? " · HD" : ""}
+        </span>
         <span className="clip__caption" title={clip.prompt}>
           {clip.caption}
         </span>
@@ -49,6 +52,7 @@ function status(job: Job<ClipMeta> | null): string {
   if (!job) return "Submitting…";
   if (job.status === "queued") return job.queue_position ? `Queued · #${job.queue_position}` : "Queued";
   if (job.kind === "speech") return `Synthesizing speech · ${Math.round(job.progress * 100)}%`;
+  if (job.kind === "upscale_video") return `Upscaling to HD · ${Math.round(job.progress * 100)}%`;
   if (job.kind === "talk" && job.progress < 0.1) return "Synthesizing speech…";
   if (job.progress < 0.05) return "Preparing media…";
   if (job.progress >= 0.999) return "Encoding video…";

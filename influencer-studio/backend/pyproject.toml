@@ -11,6 +11,8 @@ dependencies = [
     "pillow>=10",
     "python-multipart>=0.0.9",
     "av>=14",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",  # YuNet face detection
 ]
 
 [project.optional-dependencies]

@@ -58,6 +58,7 @@ export interface ContentBody {
   count: number;
   aspect: string;
   seed: number | null;
+  face_detail: boolean;
 }
 
 export interface MotionCommon {
@@ -168,6 +169,8 @@ export const api = {
     request<Job>(`/api/characters/${id}/identity-pack`, json("POST", { angles })),
   content: (id: string, body: ContentBody) => request<Job>(`/api/characters/${id}/content`, json("POST", body)),
   deleteImage: (id: string) => request<void>(`/api/images/${id}`, { method: "DELETE" }),
+  faceFix: (id: string) => request<Job>(`/api/images/${id}/face-fix`, { method: "POST" }),
+  upscaleImage: (id: string) => request<Job>(`/api/images/${id}/upscale`, { method: "POST" }),
   datasetUrl: (id: string) => `/api/characters/${id}/dataset.zip`,
 
   motionSchema: () => request<MotionSchema>("/api/motion/schema"),
@@ -183,6 +186,7 @@ export const api = {
     request<Job<ClipMeta>>(`/api/characters/${characterId}/motion/preset`, json("POST", body)),
   characterClips: (characterId: string) => request<ClipMeta[]>(`/api/characters/${characterId}/clips`),
   deleteClip: (id: string) => request<void>(`/api/clips/${id}`, { method: "DELETE" }),
+  upscaleClip: (id: string) => request<Job<ClipMeta>>(`/api/clips/${id}/upscale`, { method: "POST" }),
 
   voiceSchema: () => request<VoiceSchema>("/api/voice/schema"),
   voiceHealth: () => request<VoiceHealth>("/api/voice/health"),

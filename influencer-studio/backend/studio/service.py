@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import random
 import re
 import zipfile
 from typing import Sequence
 
+from PIL import Image
+
 from .catalog import ANGLE_BY_ID, ASPECTS, PRESET_BY_ID
 from .comfy import ComfyBackend
+from .face import CROP_SIZE, DENOISE, SMALL_FACE, Detector, crop_box, largest, paste_back
 from .flux2 import Profile, build_graph
 from .jobs import Job, JobQueue
 from .models import BuilderRequest, CharacterSpec, ContentRequest, CreateCharacterRequest, UpdateCharacterRequest
-from .prompting import NEGATIVE, angle_prompt, character_prompt, scene_prompt
+from .prompting import NEGATIVE, angle_prompt, character_prompt, face_prompt, scene_prompt
 from .store import Store
 
 
@@ -25,9 +29,17 @@ class Invalid(ValueError):
     pass
 
 
+def _png(image: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 class Studio:
-    def __init__(self, profile: Profile, comfy: ComfyBackend, store: Store, jobs: JobQueue):
+    def __init__(self, profile: Profile, comfy: ComfyBackend, store: Store, jobs: JobQueue,
+                 detector: Detector | None = None):
         self.profile, self.comfy, self.store, self.jobs = profile, comfy, store, jobs
+        self.detector = detector
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _character(self, character_id: str) -> dict:
@@ -56,6 +68,27 @@ class Studio:
         )
         lo, hi = span
         return await self.comfy.run(graph, lambda p: setattr(job, "progress", lo + (hi - lo) * p))
+
+    async def _refine_face(self, job: Job, data: bytes, character: dict, refs: Sequence[str], *, seed: int,
+                           only_small: bool, span: tuple[float, float] = (0.0, 1.0)) -> bytes | None:
+        """Re-render the largest face at CROP_SIZE and blend it back; None when there is nothing to do."""
+        if self.detector is None:
+            raise Invalid("face detection is not available")
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+        face = largest(await asyncio.to_thread(self.detector, image))
+        if face is None or (only_small and face.area / (image.width * image.height) >= SMALL_FACE):
+            return None
+        box = crop_box(face, image.width, image.height)
+        crop = image.crop(box).resize((CROP_SIZE, CROP_SIZE), Image.Resampling.LANCZOS)
+        init = await self.comfy.upload(_png(crop), f"studio_face_{job.id}_{seed}.png")
+        graph = build_graph(
+            self.profile, prompt=face_prompt(CharacterSpec.model_validate(character["spec"])),
+            negative=NEGATIVE if self.profile.cfg > 1 else "", width=CROP_SIZE, height=CROP_SIZE, seed=seed,
+            references=refs, loras=self._loras(character), init_image=init, denoise=DENOISE,
+        )
+        lo, hi = span
+        (out,) = await self.comfy.run(graph, lambda p: setattr(job, "progress", lo + (hi - lo) * p))
+        return _png(paste_back(image, Image.open(io.BytesIO(out)), box))
 
     @staticmethod
     def _seed(seed: int | None) -> int:
@@ -164,16 +197,44 @@ class Studio:
 
         async def run(job: Job) -> list[dict]:
             refs = await self._upload_references(character["reference_ids"])
+            split = 0.6 if req.face_detail else 1.0
             images = await self._render(
                 job, prompt=prompt, aspect=req.aspect, seed=seed, count=req.count,
-                references=refs, loras=self._loras(character),
+                references=refs, loras=self._loras(character), span=(0.0, split),
             )
+            if req.face_detail:  # full-body shots: redraw small faces at full resolution
+                step = (1 - split) / len(images)
+                images = [
+                    await self._refine_face(job, d, character, refs, seed=seed + i, only_small=True,
+                                            span=(split + i * step, split + (i + 1) * step)) or d
+                    for i, d in enumerate(images)
+                ]
             return [
                 self.store.save_image(d, kind="content", caption=caption, prompt=prompt, seed=seed, character_id=character_id)
                 for d in images
             ]
 
         return self.jobs.submit("content", run, group="flux2")
+
+    # ── face detail ─────────────────────────────────────────────────────────
+    def face_fix(self, image_id: str) -> Job:
+        img = self._require_image(image_id)
+        if not img["character_id"]:
+            raise Invalid("face detail works on an influencer's images (it uses their references)")
+        character = self._character(img["character_id"])
+        seed = self._seed(None)
+
+        async def run(job: Job) -> list[dict]:
+            refs = await self._upload_references(character["reference_ids"])
+            fixed = await self._refine_face(job, self.store.image_path(image_id).read_bytes(), character, refs,
+                                            seed=seed, only_small=False)
+            if fixed is None:
+                raise Invalid("no face found in this image")
+            caption = " · ".join(filter(None, (img["caption"], "face detail")))
+            return [self.store.save_image(fixed, kind="content", caption=caption, prompt=img["prompt"], seed=seed,
+                                          character_id=character["id"])]
+
+        return self.jobs.submit("face_fix", run, group="flux2")
 
     # ── LoRA dataset export ─────────────────────────────────────────────────
     def export_dataset(self, character_id: str) -> tuple[str, bytes]:

@@ -173,3 +173,10 @@ def talk_prompt(spec: CharacterSpec, extra: str = "") -> str:
     if extra.strip():
         parts.append(_sentence(extra))
     return " ".join(parts + ["Steady camera, consistent face, high quality."])
+
+
+def face_prompt(spec: CharacterSpec) -> str:
+    """Image-to-image prompt for the face-detail pass on a face crop."""
+    their = _who(spec)["their"]
+    return (f"{_subject_line(spec)} Close-up of {their} face with the same expression, head angle and lighting. "
+            "Sharp focus, clear detailed eyes, natural skin texture with pores, photorealistic.")

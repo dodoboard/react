@@ -18,6 +18,8 @@ from .models import (
     UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
+from .face import YuNet
+from .hd import HDStudio
 from .voice import VRAM_POLICIES, TTSClient, VoiceStudio
 from .voice import public_schema as voice_schema
 from .prompting import character_prompt
@@ -37,11 +39,12 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     comfy = comfy or ComfyClient(settings.comfy_url)
     store = Store(settings.data_dir)
     jobs = JobQueue()
-    studio = Studio(PROFILES[settings.profile], comfy, store, jobs)
+    studio = Studio(PROFILES[settings.profile], comfy, store, jobs, YuNet(settings.data_dir / "models"))
     if settings.pose_cache not in ("off", "int4", "int8", "default"):
         raise SystemExit("STUDIO_POSE_CACHE must be off, int4, int8 or default")
     motion = MotionStudio(comfy, store, jobs, settings.data_dir / "work",
                           None if settings.pose_cache == "off" else settings.pose_cache)
+    hd = HDStudio(comfy, store, jobs, settings.data_dir / "work")
     tts = tts or TTSClient(settings.tts_url)
     if settings.tts_vram not in VRAM_POLICIES:
         raise SystemExit(f"STUDIO_TTS_VRAM must be one of {', '.join(VRAM_POLICIES)}")
@@ -59,6 +62,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     app = FastAPI(title="Influencer Studio", lifespan=lifespan)
     app.state.studio = studio
     app.state.voice = voice
+    app.state.hd = hd
 
     @app.exception_handler(NotFound)
     async def _not_found(_: Request, e: NotFound) -> JSONResponse:
@@ -208,6 +212,18 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         return Response(status_code=204)
 
     # ── Voice studio ────────────────────────────────────────────────────────
+    @app.post("/api/images/{image_id}/upscale")
+    async def upscale_image(image_id: str) -> dict:
+        return job_response(hd.upscale_image(image_id))
+
+    @app.post("/api/images/{image_id}/face-fix")
+    async def face_fix(image_id: str) -> dict:
+        return job_response(studio.face_fix(image_id))
+
+    @app.post("/api/clips/{clip_id}/upscale")
+    async def upscale_clip(clip_id: str) -> dict:
+        return job_response(hd.upscale_clip(clip_id))
+
     @app.get("/api/voice/schema")
     def voice_schema_route() -> dict:
         return voice_schema()

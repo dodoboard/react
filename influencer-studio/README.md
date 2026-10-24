@@ -55,7 +55,8 @@ Diğer ayarlar: `STUDIO_COMFY_URL` (varsayılan `http://127.0.0.1:8188`), `STUDI
 1. **Builder**: özellikleri seç, istersen yüzünü ekle, 1–4 varyasyon üret, beğendiğini **Save as influencer** ile kaydet.
 2. **Karakter sayfası**: **Identity pack** ile farklı açılar üret, en iyilerini ★ ile referans yap (en fazla 4).
 3. **Create**: preset seç veya sahneyi yaz. Her üretimde referanslar FLUX.2'ye `ReferenceLatent` olarak verilir.
-4. **Daha güçlü tutarlılık**: **Export LoRA dataset** → zip'teki `train_flux2_klein_4b.yaml` ile [ai-toolkit](https://github.com/ostris/ai-toolkit)'te eğit → `.safetensors` dosyasını `ComfyUI/models/loras/` içine koy → karakter sayfasında seç.
+4. **Yüz ve çözünürlük**: Create'te **Face detail** açıkken (varsayılan) tam boy karelerde küçük kalan yüz bulunur, 1024 px'te referanslarla yeniden çizilir ve kareye yumuşak geçişle geri yerleştirilir. Görsellerdeki **Fix face** aynı işi tek görsele, **Upscale ×2** ise çözünürlüğü iki katına çıkarır. Bkz. [HD ve yüz iyileştirme](#hd-ve-yüz-iyileştirme).
+5. **Daha güçlü tutarlılık**: **Export LoRA dataset** → zip'teki `train_flux2_klein_4b.yaml` ile [ai-toolkit](https://github.com/ostris/ai-toolkit)'te eğit → `.safetensors` dosyasını `ComfyUI/models/loras/` içine koy → karakter sayfasında seç.
 
 ## Motion
 
@@ -119,6 +120,24 @@ python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --
 
 Yalnızca kendi sesini ya da açık izin aldığın birinin sesini klonla. Chatterbox her çıktıya duyulamayan bir yapay zekâ filigranı (Perth) ekler; yayınladığın konuşan videoları da yapay zekâ ile üretildiğini belirterek etiketle.
 
+## HD ve yüz iyileştirme
+
+| Eylem       | Nerede                       | Ne yapar                                                                                               |
+| ----------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Face detail | Create (seçenek)             | Yüz karenin %6'sından küçükse FLUX.2 img2img ile (denoise 0,4, karakter referanslarıyla) yeniden çizer |
+| Fix face    | Görsel eylemleri             | Aynı işlem, yüz büyüklüğünden bağımsız                                                                 |
+| Upscale ×2  | Görsel eylemleri             | Real-ESRGAN x4plus, ardından Lanczos ile 2x                                                            |
+| HD 1080p    | Motion / Talk video kartları | Kısa kenar 1080 px (480×832 → 1080×1872); 48 karelik parçalar halinde, ses korunur                     |
+
+```bat
+python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --profile none --video hd
+```
+
+- Real-ESRGAN x4plus (BSD-3, 64 MB) `models/upscale_models/` içine iner.
+- Yüz bulucu OpenCV YuNet (MIT, 230 KB) ilk kullanımda `data/models/` içine iner.
+- Video parça parça büyütülür: 30 sn'lik 480p bir klibin tüm 4x karelerini tek seferde tutmak ~57 GB RAM isterdi, 48 karelik bir parça ~3,7 GB ister.
+- HD kopya ayrı bir video olarak kaydedilir ("· HD" etiketi); altyazı zamanlamaları korunur.
+
 ## 16 GB ayarları
 
 Hızı kendi makinende ölç: aynı küçük render'ı iki kez çalıştırır (ilki model yüklemeyi de içerir), ComfyUI'ın başlatma bayraklarını da yazdırır. Bir bayrağı denemek için ComfyUI'ı onunla yeniden başlatıp tekrar ölç.
@@ -166,6 +185,8 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
 | `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı    |
 | `backend/studio/jobs.py`      | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır               |
 | `backend/studio/bench.py`     | `python -m studio bench`: sabit küçük render'la hız ölçümü                        |
+| `backend/studio/face.py`      | YuNet yüz bulma, kırpma ve yumuşak maskeyle geri yerleştirme                      |
+| `backend/studio/hd.py`        | Real-ESRGAN: görsel 2x, video 1080p (parça parça)                                 |
 | `tts/server.py`               | Chatterbox Multilingual TTS sunucusu (ayrı venv, port 7870), GPU→RAM offload      |
 | `tts/cleanup.py`              | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)            |
 | `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                      |

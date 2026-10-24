@@ -4,10 +4,13 @@ import type { ImageMeta, Job } from "../types";
 import { ImageTile } from "./ImageTile";
 import { ErrorNote, ProgressBar } from "./ui";
 
+const RUNNING: Record<string, string> = { face_fix: "Redrawing the face", upscale_image: "Upscaling" };
+
 function status(job: Job | null): string {
   if (!job) return "Submitting…";
   if (job.status === "queued") return job.queue_position ? `Queued · #${job.queue_position}` : "Queued";
-  if (job.status === "running") return job.progress > 0 ? `Generating · ${Math.round(job.progress * 100)}%` : "Loading model…";
+  if (job.status === "running")
+    return job.progress > 0 ? `${RUNNING[job.kind] ?? "Generating"} · ${Math.round(job.progress * 100)}%` : "Loading model…";
   return "";
 }
 

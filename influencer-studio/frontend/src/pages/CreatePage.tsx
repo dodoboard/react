@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { ImageEnhanceActions, type StartedJob } from "../components/Enhance";
 import { ImageTile } from "../components/ImageTile";
 import { JobView } from "../components/JobView";
 import { Lightbox } from "../components/Lightbox";
 import { Chip, Empty, ErrorNote, Segmented } from "../components/ui";
-import { useStudio } from "../hooks";
+import { usePersistentState, useStudio } from "../hooks";
 import type { Character, ImageMeta } from "../types";
 
-interface ContentJob {
-  id: string;
+interface ContentJob extends StartedJob {
   count: number;
-  aspect: string;
 }
 
 export function CreatePage({ characterId, navigate }: { characterId?: string; navigate: (path: string) => void }) {
@@ -20,6 +19,7 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
   const [prompt, setPrompt] = useState("");
   const [aspect, setAspect] = useState("4:5");
   const [count, setCount] = useState(2);
+  const [faceDetail, setFaceDetail] = usePersistentState("studio.create.faceDetail", () => true);
   const [jobs, setJobs] = useState<ContentJob[]>([]);
   const [recent, setRecent] = useState<ImageMeta[]>([]);
   const [shownInJobs, setShownInJobs] = useState<Set<string>>(new Set());
@@ -56,12 +56,16 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
     if (!selected) return;
     setError(null);
     try {
-      const job = await api.content(selected.id, { preset_id: presetId, prompt, count, aspect, seed: null });
-      setJobs((prev) => [{ id: job.id, count, aspect }, ...prev]);
+      const job = await api.content(selected.id, { preset_id: presetId, prompt, count, aspect, seed: null, face_detail: faceDetail });
+      setJobs((prev) => [{ id: job.id, count, aspect: ratio(aspect) }, ...prev]);
     } catch (e) {
       setError((e as Error).message);
     }
   };
+
+  const enhance = (img: ImageMeta) => (
+    <ImageEnhanceActions image={img} onJob={(j) => setJobs((prev) => [{ ...j, count: 1 }, ...prev])} onError={setError} />
+  );
 
   return (
     <div className="workspace">
@@ -147,6 +151,10 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
               onChange={setCount}
             />
           </div>
+          <label className="checkbox">
+            <input type="checkbox" checked={faceDetail} onChange={(e) => setFaceDetail(e.target.checked)} />
+            <span>Face detail: redraw small faces in full-body shots at full resolution</span>
+          </label>
           <ErrorNote message={error} />
           <button
             type="button"
@@ -165,8 +173,9 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
             key={j.id}
             jobId={j.id}
             placeholders={j.count}
-            aspect={ratio(j.aspect)}
+            aspect={j.aspect}
             onOpen={setLightbox}
+            actions={(img) => enhance(img)}
             onDone={(job) => {
               setShownInJobs((prev) => new Set([...prev, ...job.outputs.map((i) => i.id)]));
               loadRecent();
@@ -179,7 +188,7 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
         ) : (
           <div className="grid grid--gallery">
             {recent.filter((img) => !shownInJobs.has(img.id)).map((img) => (
-              <ImageTile key={img.id} image={img} onOpen={() => setLightbox(img)} />
+              <ImageTile key={img.id} image={img} onOpen={() => setLightbox(img)} actions={enhance(img)} />
             ))}
           </div>
         )}

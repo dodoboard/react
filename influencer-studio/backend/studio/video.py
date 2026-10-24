@@ -57,6 +57,9 @@ WAV2VEC2 = ModelFile("audio_encoders", "wav2vec2-chinese-base_fp16.safetensors",
                      f"{_HF}/Kijai/wav2vec2_safetensors/resolve/main/wav2vec2-chinese-base_fp16.safetensors")
 FILM = ModelFile("frame_interpolation", "film_net_fp16.safetensors",
                  f"{_HF}/Comfy-Org/frame_interpolation/resolve/main/frame_interpolation/film_net_fp16.safetensors")
+# Real-ESRGAN x4plus (BSD-3-Clause): image and video upscaling ("HD")
+REALESRGAN = ModelFile("upscale_models", "RealESRGAN_x4plus.pth",
+                       "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth")
 
 MODE_FILES: dict[str, tuple[ModelFile, ...]] = {
     "dance": (ANIMATE2, UMT5, CLIP_VISION_H, WAN_VAE),
@@ -64,6 +67,7 @@ MODE_FILES: dict[str, tuple[ModelFile, ...]] = {
     "motion": (WAN22_HIGH, WAN22_LOW, WAN22_LORA_HIGH, WAN22_LORA_LOW, UMT5, WAN_VAE),
     "talk": (WAN21_I2V_480P, INFINITETALK, WAV2VEC2, LIGHTX2V_I2V, UMT5, WAN_VAE),
     "smooth": (FILM,),
+    "hd": (REALESRGAN,),
 }
 
 # Wan's standard negative prompt (the models were trained with it, in Chinese).

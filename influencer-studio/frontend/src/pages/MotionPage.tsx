@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type MotionCommon } from "../api";
 import { CharacterPicker, SourcePicker, resolveOrientation, sourceImages } from "../components/CharacterSources";
 import { ClipCard, ClipJobView } from "../components/ClipCard";
+import { ClipHdAction } from "../components/Enhance";
 import { MediaLibrary, formatSeconds } from "../components/MediaLibrary";
 import { Chip, Empty, ErrorNote, Segmented } from "../components/ui";
 import { usePersistentState } from "../hooks";
@@ -351,17 +352,20 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
                 key={clip.id}
                 clip={clip}
                 actions={
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm btn--danger"
-                    onClick={async () => {
-                      if (!window.confirm("Delete this video?")) return;
-                      await api.deleteClip(clip.id);
-                      reload();
-                    }}
-                  >
-                    Delete
-                  </button>
+                  <>
+                    <ClipHdAction clip={clip} onJob={(j) => setJobs((prev) => [j, ...prev])} onError={setError} />
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm btn--danger"
+                      onClick={async () => {
+                        if (!window.confirm("Delete this video?")) return;
+                        await api.deleteClip(clip.id);
+                        reload();
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </>
                 }
               />
             ))}

@@ -7,6 +7,7 @@ VAE-encoded and chained onto both conditionings with ReferenceLatent (multi-refe
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -97,8 +98,15 @@ def build_graph(
     references: Sequence[str] = (),
     reference_megapixels: float = 1.0,
     loras: Sequence[tuple[str, float]] = (),
+    init_image: str | None = None,
+    denoise: float = 1.0,
 ) -> dict[str, dict]:
-    """Returns a ComfyUI API-format prompt. `references` are filenames in ComfyUI's input dir."""
+    """Returns a ComfyUI API-format prompt. `references` are filenames in ComfyUI's input dir.
+
+    With `init_image` the graph is image-to-image: the image is VAE-encoded and only the last
+    `denoise` fraction of the schedule runs. The schedule is stretched so that fraction still has
+    `profile.steps` steps (4 for the distilled models).
+    """
     if len(references) > profile.max_refs:
         raise ValueError(f"{profile.id} supports at most {profile.max_refs} reference images")
     graph: dict[str, dict] = {}
@@ -124,13 +132,23 @@ def build_graph(
         positive = add("ReferenceLatent", conditioning=positive, latent=latent)
         negative_cond = add("ReferenceLatent", conditioning=negative_cond, latent=latent)
 
+    if init_image is None:
+        sigmas = add("Flux2Scheduler", steps=profile.steps, width=width, height=height)
+        latent = add("EmptyFlux2LatentImage", width=width, height=height, batch_size=batch)
+    else:
+        if not 0 < denoise <= 1:
+            raise ValueError("denoise must be in (0, 1]")
+        steps = math.ceil(profile.steps / denoise)
+        schedule = add("Flux2Scheduler", steps=steps, width=width, height=height)
+        sigmas = [add("SplitSigmasDenoise", sigmas=schedule, denoise=denoise)[0], 1]  # low sigmas: the tail
+        latent = add("VAEEncode", pixels=add("LoadImage", image=init_image), vae=vae)
     sampled = add(
         "SamplerCustomAdvanced",
         noise=add("RandomNoise", noise_seed=seed),
         guider=add("CFGGuider", model=model, positive=positive, negative=negative_cond, cfg=profile.cfg),
         sampler=add("KSamplerSelect", sampler_name="euler"),
-        sigmas=add("Flux2Scheduler", steps=profile.steps, width=width, height=height),
-        latent_image=add("EmptyFlux2LatentImage", width=width, height=height, batch_size=batch),
+        sigmas=sigmas,
+        latent_image=latent,
     )
     add("PreviewImage", images=add("VAEDecode", samples=sampled, vae=vae))
     return graph

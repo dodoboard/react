@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type TalkBody, type VoiceOptions } from "../api";
 import { CharacterPicker, SourcePicker, resolveOrientation, sourceImages } from "../components/CharacterSources";
 import { ClipCard, ClipJobView } from "../components/ClipCard";
+import { ClipHdAction } from "../components/Enhance";
 import { MediaLibrary } from "../components/MediaLibrary";
 import { Chip, Empty, ErrorNote, ProgressBar, Segmented } from "../components/ui";
 import { useJob, usePersistentState } from "../hooks";
@@ -335,7 +336,16 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
         ) : (
           <div className="clip-grid">
             {talkClips.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} actions={<DeleteClip clip={clip} onDeleted={reload} />} />
+              <ClipCard
+                key={clip.id}
+                clip={clip}
+                actions={
+                  <>
+                    <ClipHdAction clip={clip} onJob={(j) => setJobs((prev) => [j, ...prev])} onError={setError} />
+                    <DeleteClip clip={clip} onDeleted={reload} />
+                  </>
+                }
+              />
             ))}
           </div>
         )}

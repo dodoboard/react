@@ -118,6 +118,8 @@ class ComfyClient:
         images: list[bytes] = []
         for node_output in outputs.values():
             for item in node_output.get("images", []):
+                if item.get("type") == "input":  # LoadVideo echoes its input file as a preview
+                    continue
                 v = await self._http.get(
                     "/view", params={k: item[k] for k in ("filename", "subfolder", "type")}
                 )

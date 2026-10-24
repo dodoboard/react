@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type CharacterPatch } from "../api";
+import { ImageEnhanceActions, type StartedJob } from "../components/Enhance";
 import { ImageTile } from "../components/ImageTile";
 import { JobView } from "../components/JobView";
 import { Lightbox } from "../components/Lightbox";
@@ -19,6 +20,7 @@ export function CharacterPage({ id, navigate }: { id: string; navigate: (path: s
   const [filter, setFilter] = useState<Filter>("all");
   const [lightbox, setLightbox] = useState<ImageMeta | null>(null);
   const [loras, setLoras] = useState<string[]>([]);
+  const [enhanceJobs, setEnhanceJobs] = useState<StartedJob[]>([]);
 
   const reload = useCallback(() => api.character(id).then(setCharacter, (e: Error) => setError(e.message)), [id]);
   useEffect(() => {
@@ -217,6 +219,9 @@ export function CharacterPage({ id, navigate }: { id: string; navigate: (path: s
               onChange={setFilter}
             />
           </div>
+          {enhanceJobs.map((j) => (
+            <JobView key={j.id} jobId={j.id} placeholders={1} aspect={j.aspect} compact onOpen={setLightbox} onDone={() => reload()} />
+          ))}
           {shown.length === 0 ? (
             <Empty title="Nothing here yet">Generate an identity pack or create content.</Empty>
           ) : (
@@ -233,6 +238,7 @@ export function CharacterPage({ id, navigate }: { id: string; navigate: (path: s
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleRef(img.id)}>
                         {refs.includes(img.id) ? "Unset reference" : "★ Reference"}
                       </button>
+                      <ImageEnhanceActions image={img} onJob={(j) => setEnhanceJobs((prev) => [j, ...prev])} onError={setError} />
                       {img.id !== character.portrait_id && (
                         <button type="button" className="btn btn--ghost btn--sm btn--danger" onClick={() => removeImage(img)}>
                           Delete

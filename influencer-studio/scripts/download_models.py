@@ -32,7 +32,7 @@ def download(url: str, dest: Path, token: str | None) -> None:
     part = dest.with_name(dest.name + ".part")
     have = part.stat().st_size if part.exists() else 0
     headers = {"User-Agent": "influencer-studio"}
-    if token:
+    if token and url.startswith("https://huggingface.co/"):  # never send the HF token elsewhere
         headers["Authorization"] = f"Bearer {token}"
     if have:
         headers["Range"] = f"bytes={have}-"
@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument("--profile", default="klein-4b", choices=[*PROFILES, "all", "none"],
                         help="FLUX.2 image profile")
     parser.add_argument("--video", default="", metavar="MODES",
-                        help=f"comma-separated Motion modes: {', '.join(MODE_FILES)} or all")
+                        help=f"comma-separated video modes: {', '.join(MODE_FILES)} or all")
     args = parser.parse_args()
     modes = list(MODE_FILES) if args.video == "all" else [m for m in args.video.split(",") if m]
     if unknown := [m for m in modes if m not in MODE_FILES]:
@@ -84,7 +84,7 @@ def main() -> None:
         profiles = [] if args.profile == "none" else [PROFILES[args.profile]]
     groups = [(f"{p.label} ({p.license})", [(folder, url, url.rsplit("/", 1)[-1]) for folder, url in p.downloads])
               for p in profiles]
-    groups += [(f"Motion: {m}", [(f.folder, f.url, f.name) for f in MODE_FILES[m]]) for m in modes]
+    groups += [(f"Video: {m}", [(f.folder, f.url, f.name) for f in MODE_FILES[m]]) for m in modes]
     if not groups:
         parser.error("nothing to download: pick a --profile and/or --video modes")
     seen: set[str] = set()

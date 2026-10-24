@@ -159,3 +159,88 @@ def extract_audio(src: Path, dst: Path, *, start: float, seconds: float) -> floa
         w.setframerate(AUDIO_RATE)
         w.writeframes(data)
     return len(data) / 4 / AUDIO_RATE
+
+
+def split_video(src: Path, dst_dir: Path, frames_per_chunk: int) -> list[Path]:
+    """Silent, near-lossless (crf 12) MP4 chunks of `frames_per_chunk` frames at the source size and rate.
+
+    Lets a long clip go through a per-frame model (upscaling) a few seconds at a time instead of
+    holding every upscaled frame in RAM at once.
+    """
+    chunks: list[Path] = []
+    out = enc = None
+
+    def close() -> None:
+        if out is not None:
+            for packet in enc.encode():
+                out.mux(packet)
+            out.close()
+
+    with av.open(str(src)) as inp:
+        stream = inp.streams.video[0]
+        rate = stream.average_rate or 25
+        written = frames_per_chunk
+        for frame in inp.decode(stream):
+            if written == frames_per_chunk:
+                close()
+                chunks.append(dst_dir / f"chunk_{len(chunks):03}.mp4")
+                out = av.open(str(chunks[-1]), "w", format="mp4")
+                enc = out.add_stream("libx264", rate=rate)
+                enc.width, enc.height, enc.pix_fmt = frame.width, frame.height, "yuv420p"
+                enc.options = {"crf": "12", "preset": "veryfast"}
+                written = 0
+            image = frame.reformat(format="yuv420p")
+            image.pts = written
+            image.time_base = enc.codec_context.time_base
+            for packet in enc.encode(image):
+                out.mux(packet)
+            written += 1
+        close()
+    if not chunks:
+        raise MediaError("no video frames")
+    return chunks
+
+
+def join_video(chunks: list[Path], dst: Path, *, rate, audio_src: Path | None = None) -> int:
+    """Concatenate video chunks into one H.264 MP4 (crf 18) with `audio_src`'s audio as AAC. Returns frames."""
+    with av.open(str(chunks[0])) as first:
+        width, height = first.streams.video[0].codec_context.width, first.streams.video[0].codec_context.height
+    with av.open(str(dst), "w", format="mp4", options={"movflags": "+faststart"}) as out:
+        video = out.add_stream("libx264", rate=rate)
+        video.width, video.height, video.pix_fmt = width, height, "yuv420p"
+        video.options = {"crf": "18", "preset": "fast"}
+        audio_in = av.open(str(audio_src)) if audio_src else None
+        try:
+            has_audio = bool(audio_in and audio_in.streams.audio)
+            audio = out.add_stream("aac", rate=48000, layout="stereo") if has_audio else None
+            if audio is not None:
+                audio.bit_rate = 192_000
+            frames = 0
+            for chunk in chunks:
+                with av.open(str(chunk)) as inp:
+                    for frame in inp.decode(video=0):
+                        image = frame.reformat(width=width, height=height, format="yuv420p")
+                        image.pts = frames
+                        image.time_base = video.codec_context.time_base
+                        for packet in video.encode(image):
+                            out.mux(packet)
+                        frames += 1
+            for packet in video.encode():
+                out.mux(packet)
+            if audio is not None:
+                resampler = av.AudioResampler(format="fltp", layout="stereo", rate=48000)
+                samples, limit = 0, round(frames / float(rate) * 48000)  # never run past the picture
+                for frame in [*audio_in.decode(audio=0), None]:
+                    for chunk in resampler.resample(frame):
+                        if samples >= limit:
+                            break
+                        chunk.pts = samples
+                        samples += chunk.samples
+                        for packet in audio.encode(chunk):
+                            out.mux(packet)
+                for packet in audio.encode():
+                    out.mux(packet)
+        finally:
+            if audio_in is not None:
+                audio_in.close()
+    return frames

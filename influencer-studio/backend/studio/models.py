@@ -85,6 +85,7 @@ class ContentRequest(BaseModel):
     count: int = Field(2, ge=1, le=4)
     aspect: str = "4:5"
     seed: int | None = Field(None, ge=0, le=2**53)
+    face_detail: bool = False  # redraw small faces (full-body shots) at full resolution
 
     check_aspect = field_validator("aspect")(_check_aspect)
 
