@@ -28,6 +28,10 @@ CHUNK_FRAMES = 48
 VIDEO_KINDS = {"dance", "music_dance", "motion", "talk"}  # generated clips
 
 
+def is_hd(clip: dict) -> bool:
+    return bool(clip["meta"].get("hd")) or min(clip["width"], clip["height"]) >= HD_SHORT_SIDE
+
+
 def hd_size(width: int, height: int) -> tuple[int, int]:
     """Short side HD_SHORT_SIDE, aspect kept, even dimensions for H.264."""
     scale = HD_SHORT_SIDE / min(width, height)
@@ -79,43 +83,58 @@ class HDStudio:
 
         return self.jobs.submit("upscale_image", run, group="upscale")
 
-    def upscale_clip(self, clip_id: str) -> Job:
-        clip = self.store.clip(clip_id)
+    @staticmethod
+    def check_clip(clip: dict | None, clip_id: str) -> dict:
         if not clip:
             raise NotFound(f"clip {clip_id} not found")
         if clip["kind"] not in VIDEO_KINDS:
             raise Invalid("HD works on generated videos")
-        if clip["meta"].get("hd") or min(clip["width"], clip["height"]) >= HD_SHORT_SIDE:
+        if is_hd(clip):
             raise Invalid("this video is already HD")
+        return clip
+
+    def find_hd(self, clip: dict) -> dict | None:
+        """An earlier HD copy of `clip`, if any."""
+        return next((c for c in self.store.clips(character_id=clip["character_id"], kinds=(clip["kind"],))
+                     if c["meta"].get("source_clip_id") == clip["id"] and c["meta"].get("hd")), None)
+
+    async def render_hd(self, job: Job, clip: dict, span: tuple[float, float] = (0.0, 1.0)) -> dict:
+        """Upscale `clip` chunk by chunk and store the HD copy (used by the HD and export jobs)."""
+        await self._require_model()
         width, height = hd_size(clip["width"], clip["height"])
+        work = self.work_dir / f"{job.id}_hd_{clip['id']}"
+        work.mkdir(parents=True, exist_ok=True)
+        lo, hi = span
+        try:
+            src = self.store.clip_path(clip)
+            with av.open(str(src)) as c:
+                rate = c.streams.video[0].average_rate or Fraction(round(clip["fps"] or 25))
+            chunks = await asyncio.to_thread(split_video, src, work, CHUNK_FRAMES)
+            upscaled = []
+            for i, chunk in enumerate(chunks):
+                name = await self.comfy.upload(chunk.read_bytes(), f"studio_{job.id}_{clip['id']}_{i:03}.mp4")
+                a = lo + (hi - lo) * 0.95 * i / len(chunks)
+                b = lo + (hi - lo) * 0.95 * (i + 1) / len(chunks)
+                (video,) = await self.comfy.run(build_video_upscale_graph(name, width, height),
+                                                lambda p, a=a, b=b: setattr(job, "progress", a + (b - a) * p))
+                upscaled.append(work / f"hd_{i:03}.mp4")
+                upscaled[-1].write_bytes(video)
+            result = work / "hd.mp4"
+            await asyncio.to_thread(join_video, upscaled, result, rate=rate,
+                                    audio_src=src if clip["has_audio"] else None)
+            meta = {**clip["meta"], "hd": True, "source_clip_id": clip["id"]}
+            caption = " · ".join(filter(None, (clip["caption"], "HD")))
+            return self.store.save_clip(result, kind=clip["kind"], ext="mp4", info=probe(result).public(),
+                                        name=clip["name"], caption=caption, prompt=clip["prompt"], seed=clip["seed"],
+                                        character_id=clip["character_id"], source_image_id=clip["source_image_id"],
+                                        meta=meta)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def upscale_clip(self, clip_id: str) -> Job:
+        clip = self.check_clip(self.store.clip(clip_id), clip_id)
 
         async def run(job: Job) -> list[dict]:
-            await self._require_model()
-            work = self.work_dir / job.id
-            work.mkdir(parents=True, exist_ok=True)
-            try:
-                src = self.store.clip_path(clip)
-                with av.open(str(src)) as c:
-                    rate = c.streams.video[0].average_rate or Fraction(round(clip["fps"] or 25))
-                chunks = await asyncio.to_thread(split_video, src, work, CHUNK_FRAMES)
-                upscaled = []
-                for i, chunk in enumerate(chunks):
-                    name = await self.comfy.upload(chunk.read_bytes(), f"studio_{job.id}_{i:03}.mp4")
-                    lo, hi = 0.95 * i / len(chunks), 0.95 * (i + 1) / len(chunks)
-                    (video,) = await self.comfy.run(build_video_upscale_graph(name, width, height),
-                                                    lambda p, lo=lo, hi=hi: setattr(job, "progress", lo + (hi - lo) * p))
-                    upscaled.append(work / f"hd_{i:03}.mp4")
-                    upscaled[-1].write_bytes(video)
-                result = work / "hd.mp4"
-                await asyncio.to_thread(join_video, upscaled, result, rate=rate,
-                                        audio_src=src if clip["has_audio"] else None)
-                meta = {**clip["meta"], "hd": True, "source_clip_id": clip["id"]}
-                caption = " · ".join(filter(None, (clip["caption"], "HD")))
-                return [self.store.save_clip(result, kind=clip["kind"], ext="mp4", info=probe(result).public(),
-                                             name=clip["name"], caption=caption, prompt=clip["prompt"], seed=clip["seed"],
-                                             character_id=clip["character_id"], source_image_id=clip["source_image_id"],
-                                             meta=meta)]
-            finally:
-                shutil.rmtree(work, ignore_errors=True)
+            return [await self.render_hd(job, clip)]
 
         return self.jobs.submit("upscale_video", run, group="upscale")

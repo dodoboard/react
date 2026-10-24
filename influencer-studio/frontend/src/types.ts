@@ -98,7 +98,7 @@ export interface Health {
 }
 
 export type MediaKind = "driver" | "music" | "voice" | "speech";
-export type ClipKind = MediaKind | "dance" | "music_dance" | "motion" | "talk";
+export type ClipKind = MediaKind | "dance" | "music_dance" | "motion" | "talk" | "export";
 
 export interface ClipMeta {
   id: string;
@@ -148,3 +148,24 @@ export interface VoiceHealth {
   comfy: boolean;
   missing_models: { folder: string; file: string }[];
 }
+
+export interface CueWord {
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface Cue {
+  start: number;
+  end: number;
+  text: string;
+  words: CueWord[];
+}
+
+export interface CuesResponse {
+  cues: Cue[];
+  source: "edited" | "recognized" | "script" | null;
+  scripted: boolean; // timed from a TTS script: no need for speech recognition
+}
+
+export type ExportFormat = "9:16" | "4:5" | "1:1" | "16:9";

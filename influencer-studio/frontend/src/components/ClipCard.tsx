@@ -9,6 +9,7 @@ const KIND_LABEL: Record<string, string> = {
   motion: "Motion",
   talk: "Talk",
   speech: "Speech",
+  export: "Export",
 };
 
 export function ClipCard({ clip, actions }: { clip: ClipMeta; actions?: ReactNode }) {

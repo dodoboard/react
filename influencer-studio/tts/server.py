@@ -9,6 +9,10 @@ Resemble's inaudible Perth watermark, which marks the audio as AI-generated.
 
 ComfyUI needs the same GPU, so the studio calls /offload after each script: the model moves to
 system RAM (seconds to bring back, instead of reloading from disk) and its VRAM is released.
+
+POST /transcribe returns word timestamps (faster-whisper large-v3-turbo, MIT) for subtitles on
+recordings. It runs on the CPU by default (WHISPER_DEVICE=cuda to change), so it never competes
+with ComfyUI for VRAM.
 """
 
 from __future__ import annotations
@@ -104,6 +108,26 @@ class ChatterboxEngine:
         return samples.cpu().numpy().tobytes()
 
 
+class Transcriber(Protocol):
+    def transcribe(self, audio: bytes, language: str | None) -> dict:
+        """{"language": "tr", "words": [{"text", "start", "end"}]}"""
+
+
+class WhisperTranscriber:
+    def __init__(self, model: str = "large-v3-turbo", device: str | None = None):
+        from faster_whisper import WhisperModel
+
+        device = device or os.environ.get("WHISPER_DEVICE", "cpu")
+        self.model = WhisperModel(model, device=device, compute_type="int8" if device == "cpu" else "int8_float16")
+
+    def transcribe(self, audio: bytes, language: str | None) -> dict:
+        segments, info = self.model.transcribe(io.BytesIO(audio), language=language, word_timestamps=True,
+                                               vad_filter=True, condition_on_previous_text=False)
+        words = [{"text": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)}
+                 for segment in segments for w in (segment.words or []) if w.word.strip()]
+        return {"language": info.language, "words": words}
+
+
 def to_wav(pcm: bytes, sample_rate: int) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -126,8 +150,10 @@ def _planned_device() -> str:
 
 
 def create_app(engine_factory: Callable[[], Engine] | None = None,
-               planned_device: Callable[[], str] = _planned_device, postprocess: bool = True) -> FastAPI:
+               planned_device: Callable[[], str] = _planned_device, postprocess: bool = True,
+               transcriber_factory: Callable[[], Transcriber] | None = None) -> FastAPI:
     """`postprocess` trims silence and evens out loudness (needs numpy + pyloudnorm)."""
+    transcriber_factory = transcriber_factory or WhisperTranscriber
     factory = engine_factory or (lambda: ChatterboxEngine(os.environ.get("TTS_DEVICE") or None))
     if postprocess:
         from cleanup import clean_reference, clean_speech
@@ -154,6 +180,19 @@ def create_app(engine_factory: Callable[[], Engine] | None = None,
             state["device"] = planned_device()
         return {"ok": True, "loaded": e is not None, "device": e.device if e else state["device"],
                 "languages": e.languages if e else None, "error": state["error"]}
+
+    whisper: dict = {"model": None}
+    whisper_lock = threading.Lock()
+
+    @app.post("/transcribe")
+    def transcribe(audio: UploadFile = File(...), language: str | None = Form(None)) -> dict:
+        with whisper_lock:  # one transcription at a time; the model loads on first use
+            if whisper["model"] is None:
+                try:
+                    whisper["model"] = transcriber_factory()
+                except Exception as e:
+                    raise HTTPException(503, f"speech recognition failed to load: {type(e).__name__}: {e}") from e
+            return whisper["model"].transcribe(audio.file.read(), language or None)
 
     @app.post("/offload")
     def offload() -> dict:

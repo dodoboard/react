@@ -10,6 +10,7 @@ if not exist ".venv\Scripts\python.exe" (
 ".venv\Scripts\python.exe" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128 || goto :error
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :error
 ".venv\Scripts\python.exe" -m pip install --no-deps chatterbox-tts==0.1.7 || goto :error
+copy /y "requirements.txt" ".venv\requirements.installed" >nul
 echo.
 echo TTS environment ready. Start it with tts\start.bat
 goto :eof

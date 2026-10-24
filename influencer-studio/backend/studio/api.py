@@ -10,22 +10,24 @@ from fastapi.staticfiles import StaticFiles
 
 from .catalog import public_catalog
 from .comfy import ComfyBackend, ComfyClient
+from .export import ExportStudio
+from .face import YuNet
 from .flux2 import PROFILES
+from .hd import HDStudio
 from .jobs import JobQueue
 from .models import (
-    BuilderRequest, ContentRequest, CreateCharacterRequest, DanceRequest, IdentityPackRequest,
-    MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
-    UpdateCharacterRequest,
+    BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, ExportRequest,
+    IdentityPackRequest, MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
+    TranscribeRequest, UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
-from .face import YuNet
-from .hd import HDStudio
-from .voice import VRAM_POLICIES, TTSClient, VoiceStudio
-from .voice import public_schema as voice_schema
 from .prompting import character_prompt
 from .service import Invalid, NotFound, Studio
 from .settings import Settings
 from .store import Store
+from .subtitles import clip_cues, retime
+from .voice import VRAM_POLICIES, TTSClient, VoiceStudio, transcribe_job
+from .voice import public_schema as voice_schema
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_MEDIA_BYTES = 500 * 1024 * 1024
@@ -45,6 +47,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     motion = MotionStudio(comfy, store, jobs, settings.data_dir / "work",
                           None if settings.pose_cache == "off" else settings.pose_cache)
     hd = HDStudio(comfy, store, jobs, settings.data_dir / "work")
+    exporter = ExportStudio(store, jobs, hd, settings.data_dir / "work")
     tts = tts or TTSClient(settings.tts_url)
     if settings.tts_vram not in VRAM_POLICIES:
         raise SystemExit(f"STUDIO_TTS_VRAM must be one of {', '.join(VRAM_POLICIES)}")
@@ -223,6 +226,42 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     @app.post("/api/clips/{clip_id}/upscale")
     async def upscale_clip(clip_id: str) -> dict:
         return job_response(hd.upscale_clip(clip_id))
+
+    # ── Subtitles and export ────────────────────────────────────────────────
+    def _clip(clip_id: str) -> dict:
+        if not (clip := store.clip(clip_id)):
+            raise NotFound(f"clip {clip_id} not found")
+        return clip
+
+    @app.get("/api/clips/{clip_id}/cues")
+    def get_cues(clip_id: str) -> dict:
+        clip = _clip(clip_id)
+        meta = clip["meta"]
+        source = "edited" if meta.get("cues") else "recognized" if meta.get("words") else \
+            "script" if meta.get("segments") else None
+        return {"cues": clip_cues(clip), "source": source, "scripted": bool(meta.get("segments"))}
+
+    @app.patch("/api/clips/{clip_id}/cues")
+    def edit_cues(clip_id: str, req: CuesUpdate) -> dict:
+        clip = _clip(clip_id)
+        old = {(c["start"], c["text"]): c for c in clip_cues(clip)}
+        language = clip["meta"].get("language", "tr")
+        cues = []
+        for cue in sorted(req.cues, key=lambda c: c.start):
+            if cue.end <= cue.start or not cue.text.strip():
+                continue
+            kept = old.get((cue.start, cue.text.strip()))
+            cues.append(kept if kept and kept["end"] == cue.end else retime(cue.model_dump(), cue.text.strip(), language))
+        store.update_clip_meta(clip_id, cues=cues or None)
+        return get_cues(clip_id)
+
+    @app.post("/api/clips/{clip_id}/transcribe")
+    async def transcribe(clip_id: str, req: TranscribeRequest) -> dict:
+        return job_response(transcribe_job(voice, clip_id, req.language))
+
+    @app.post("/api/exports")
+    async def create_export(req: ExportRequest) -> dict:
+        return job_response(exporter.export(req))
 
     @app.get("/api/voice/schema")
     def voice_schema_route() -> dict:

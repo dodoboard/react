@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import argparse
+import io
 import math
 import struct
 import sys
+import wave
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tts"))
@@ -36,11 +38,28 @@ class ToneEngine:
         return self.device != "cpu"
 
 
+class FakeWhisper:
+    """Recognizes one word every half second of audio: "kelime1", "kelime2"…, sentences of four."""
+
+    def __init__(self):
+        self.calls: list[str | None] = []
+
+    def transcribe(self, audio: bytes, language: str | None) -> dict:
+        self.calls.append(language)
+        with wave.open(io.BytesIO(audio)) as w:
+            seconds = w.getnframes() / w.getframerate()
+        words = [{"text": f"kelime{i + 1}" + ("." if i % 4 == 3 else ""), "start": i * 0.5, "end": i * 0.5 + 0.4}
+                 for i in range(int(seconds / 0.5))]
+        return {"language": language or "tr", "words": words}
+
+
 def create_fake_tts(engine: ToneEngine | None = None):
     engine = engine or ToneEngine()
     # no clean-up: output lengths stay exact (cleanup.py is tested in tts/test_server.py)
-    app = create_app(lambda: engine, planned_device=lambda: engine.device, postprocess=False)
-    app.state.engine = engine
+    whisper = FakeWhisper()
+    app = create_app(lambda: engine, planned_device=lambda: engine.device, postprocess=False,
+                     transcriber_factory=lambda: whisper)
+    app.state.engine, app.state.whisper = engine, whisper
     return app
 
 

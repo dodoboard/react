@@ -5,6 +5,7 @@ import { BuilderPage } from "./pages/BuilderPage";
 import { CharacterPage } from "./pages/CharacterPage";
 import { CharactersPage } from "./pages/CharactersPage";
 import { CreatePage } from "./pages/CreatePage";
+import { ExportPage } from "./pages/ExportPage";
 import { MotionPage } from "./pages/MotionPage";
 import { TalkPage } from "./pages/TalkPage";
 import type { Health, Schema } from "./types";
@@ -15,6 +16,7 @@ const NAV = [
   { path: "create", label: "Create" },
   { path: "motion", label: "Motion" },
   { path: "talk", label: "Talk" },
+  { path: "export", label: "Export" },
 ];
 
 function HealthPill({ health }: { health: Health | null }) {
@@ -76,7 +78,7 @@ export function App() {
   if (fatal) return <div className="fatal">Studio backend is not running ({fatal}). Start it with <code>python -m studio</code>.</div>;
   if (!schema) return <div className="fatal muted">Loading studio…</div>;
 
-  const [section = "builder", param] = route;
+  const [section = "builder", param, extra] = route;
   const page =
     section === "characters" && param ? (
       <CharacterPage key={param} id={param} navigate={navigate} />
@@ -88,6 +90,8 @@ export function App() {
       <MotionPage characterId={param} navigate={navigate} />
     ) : section === "talk" ? (
       <TalkPage characterId={param} navigate={navigate} />
+    ) : section === "export" ? (
+      <ExportPage characterId={param} addClipId={extra} navigate={navigate} />
     ) : (
       <BuilderPage navigate={navigate} />
     );

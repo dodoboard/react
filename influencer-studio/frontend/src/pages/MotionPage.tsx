@@ -354,6 +354,9 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
                 actions={
                   <>
                     <ClipHdAction clip={clip} onJob={(j) => setJobs((prev) => [j, ...prev])} onError={setError} />
+                    <a className="btn btn--ghost btn--sm" href={`#/export/${clip.character_id}/${clip.id}`}>
+                      Export
+                    </a>
                     <button
                       type="button"
                       className="btn btn--ghost btn--sm btn--danger"

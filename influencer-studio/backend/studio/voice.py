@@ -64,6 +64,16 @@ class TTSClient:
         except httpx.HTTPError:
             pass
 
+    async def transcribe(self, wav: bytes, language: str | None) -> dict:
+        try:
+            r = await self._http.post("/transcribe", data={"language": language or ""},
+                                      files={"audio": ("audio.wav", wav, "audio/wav")})
+        except httpx.TransportError as e:
+            raise RuntimeError("TTS server is not running: start tts/start.bat") from e
+        if r.status_code != 200:
+            raise RuntimeError(f"speech recognition failed: {r.text}")
+        return r.json()
+
     async def synthesize(self, text: str, *, language: str, voice: bytes | None, exaggeration: float,
                          cfg_weight: float, temperature: float, seed: int | None) -> bytes:
         data = {"text": text, "language": language, "exaggeration": str(exaggeration),
@@ -115,13 +125,14 @@ class Speech:
     wav: bytes
     chunks: list[Chunk]
     spans: list[tuple[float, float]] = field(default_factory=list)
+    language: str = "tr"
 
     @property
     def spoken(self) -> str:
         return " ".join(c.spoken for c in self.chunks)
 
     def meta(self) -> dict:
-        return {"segments": [{"start": round(a, 3), "end": round(b, 3), "text": c.display, "spoken": c.spoken}
+        return {"language": self.language, "segments": [{"start": round(a, 3), "end": round(b, 3), "text": c.display, "spoken": c.spoken}
                              for c, (a, b) in zip(self.chunks, self.spans)]}
 
 
@@ -192,7 +203,7 @@ class VoiceStudio:
         finally:
             await self.tts.offload()  # hand the VRAM back to ComfyUI
         wav, spans = join_wavs(wavs, [c.pause for c in chunks])
-        return Speech(wav, chunks, spans)
+        return Speech(wav, chunks, spans, req.language)
 
     def _save_speech(self, speech: Speech, work: Path, *, script: str, character_id: str | None,
                      voice: dict | None, seed: int | None) -> dict:
@@ -279,6 +290,36 @@ class VoiceStudio:
                 shutil.rmtree(work, ignore_errors=True)
 
         return self.jobs.submit("talk", run)
+
+
+TRANSCRIBE_SECONDS = 180
+
+
+def transcribe_job(voice: VoiceStudio, clip_id: str, language: str | None) -> Job:
+    """Word timings for a clip's audio (recordings, uploaded voice-overs, dance music…) → meta.words."""
+    clip = voice.store.clip(clip_id)
+    if not clip:
+        raise NotFound(f"clip {clip_id} not found")
+    if not clip["has_audio"]:
+        raise Invalid("this clip has no audio")
+    if clip["duration"] > TRANSCRIBE_SECONDS:
+        raise Invalid(f"clips up to {TRANSCRIBE_SECONDS // 60} minutes can be transcribed")
+
+    async def run(job: Job) -> list[dict]:
+        work = voice._work(job)
+        try:
+            wav = work / "audio.wav"
+            await asyncio.to_thread(extract_audio, voice.store.clip_path(clip), wav, start=0, seconds=clip["duration"])
+            job.progress = 0.1
+            result = await voice.tts.transcribe(wav.read_bytes(), language)
+            if not result["words"]:
+                raise Invalid("no speech found in this clip")
+            return [voice.store.update_clip_meta(clip_id, words=result["words"], language=result.get("language"),
+                                                 cues=None)]
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    return voice.jobs.submit("transcribe", run, group="tts")
 
 
 def public_schema() -> dict:

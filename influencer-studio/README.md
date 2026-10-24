@@ -11,6 +11,7 @@ Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde gör
 | –                                 | LoRA veri seti dışa aktarma (ai-toolkit config'iyle)                               |
 | Motion (Genjutsu)                 | Motion: dans aktarımı, müzikle dans, hareket şablonları. Bkz. [Motion](#motion)    |
 | Konuşan video / lipsync           | Talk: Türkçe TTS, ses klonlama, InfiniteTalk dudak senkronu. Bkz. [Talk](#talk)    |
+| Paylaşıma hazır çıktı             | Export: klip birleştirme, altyazı, müzik, 1080p. Bkz. [Export](#export)            |
 
 ## Gereksinimler
 
@@ -120,6 +121,20 @@ python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --
 
 Yalnızca kendi sesini ya da açık izin aldığın birinin sesini klonla. Chatterbox her çıktıya duyulamayan bir yapay zekâ filigranı (Perth) ekler; yayınladığın konuşan videoları da yapay zekâ ile üretildiğini belirterek etiketle.
 
+## Export
+
+Klipleri tek bir paylaşıma hazır videoda birleştirir: Talk/Motion kartlarındaki **Export** ya da Export sayfasındaki klip listesiyle zaman çizelgesine ekle, sırala, her birini **In / Out** ile kırp.
+
+- **Formatlar**: 9:16 (1080×1920, Reels/TikTok/Shorts), 4:5, 1:1, 16:9. Klipler 30 fps'e zamana göre örneklenir, kadrajı dolduracak şekilde ölçeklenip ortadan kırpılır.
+- **Altyazı**: Talk videoları script'ten altyazılanır; metin yazıldığı gibi görünür (`%30`, `₺49,90`), zamanlama seslendirilen parçaların gerçek sürelerinden ve Türkçe hece sayısından gelir. **Reels** stilinde o an söylenen kelime sarı vurgulanır (karaoke), **Minimal** stilinde yarı saydam kutu kullanılır. Altyazılar TikTok/Reels butonlarının kapatmadığı alanda durur. Her klipte **Captions…** ile metin elle düzeltilebilir.
+- **Kayıtlar için konuşma tanıma**: script'i olmayan seslerde (yüklenen seslendirme, müzikli dans) **Recognize speech** kelime zamanlarını faster-whisper large-v3-turbo (MIT) ile çıkarır. TTS sunucusunda, varsayılan olarak CPU'da çalışır (`WHISPER_DEVICE=cuda` ile GPU); model (~1,6 GB) ilk kullanımda iner.
+- **Müzik**: Motion'daki şarkı kütüphanesinden seçilir; konuşma sırasında otomatik kısılır (ducking, -10 dB).
+- **Ses**: tüm karışım -14 LUFS / -1,5 dBTP'ye ayarlanır (Instagram, TikTok, YouTube'un normalleştirdiği seviye).
+- **HD**: seçiliyse klipler önce 1080p'ye büyütülür; daha önce büyütülmüş kopyalar yeniden kullanılır.
+- Çıktı: H.264 High, crf 18, AAC 192 kb/s, `faststart`. En fazla 3 dakika.
+
+Altyazı fontu Poppins ExtraBold (SIL OFL 1.1), `backend/studio/assets/fonts/` içinde lisansıyla birlikte.
+
 ## HD ve yüz iyileştirme
 
 | Eylem       | Nerede                       | Ne yapar                                                                                               |
@@ -171,25 +186,27 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
                          └─ HTTP ──► TTS sunucusu (tts/, Chatterbox, ayrı venv)
 ```
 
-| Dosya                         | Görev                                                                             |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| `backend/studio/catalog.py`   | Özellik kataloğu, preset'ler, açılar. Arayüz buradan çizilir (tek kaynak)         |
-| `backend/studio/prompting.py` | Seçimleri doğal dilde FLUX.2 prompt'una derler                                    |
-| `backend/studio/flux2.py`     | Model profilleri + ComfyUI API grafı (ComfyUI'ın resmi FLUX.2 şablonlarıyla aynı) |
-| `backend/studio/comfy.py`     | ComfyUI istemcisi: upload, `/prompt`, `/ws` ilerleme, `/history`                  |
-| `backend/studio/service.py`   | Builder, karakter, kimlik paketi, içerik, veri seti                               |
-| `backend/studio/video.py`     | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                     |
-| `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                            |
-| `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları          |
-| `backend/studio/turkish.py`   | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme           |
-| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı    |
-| `backend/studio/jobs.py`      | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır               |
-| `backend/studio/bench.py`     | `python -m studio bench`: sabit küçük render'la hız ölçümü                        |
-| `backend/studio/face.py`      | YuNet yüz bulma, kırpma ve yumuşak maskeyle geri yerleştirme                      |
-| `backend/studio/hd.py`        | Real-ESRGAN: görsel 2x, video 1080p (parça parça)                                 |
-| `tts/server.py`               | Chatterbox Multilingual TTS sunucusu (ayrı venv, port 7870), GPU→RAM offload      |
-| `tts/cleanup.py`              | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)            |
-| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                      |
+| Dosya                         | Görev                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `backend/studio/catalog.py`   | Özellik kataloğu, preset'ler, açılar. Arayüz buradan çizilir (tek kaynak)          |
+| `backend/studio/prompting.py` | Seçimleri doğal dilde FLUX.2 prompt'una derler                                     |
+| `backend/studio/flux2.py`     | Model profilleri + ComfyUI API grafı (ComfyUI'ın resmi FLUX.2 şablonlarıyla aynı)  |
+| `backend/studio/comfy.py`     | ComfyUI istemcisi: upload, `/prompt`, `/ws` ilerleme, `/history`                   |
+| `backend/studio/service.py`   | Builder, karakter, kimlik paketi, içerik, veri seti                                |
+| `backend/studio/video.py`     | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                      |
+| `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                             |
+| `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları           |
+| `backend/studio/turkish.py`   | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme            |
+| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı     |
+| `backend/studio/jobs.py`      | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır                |
+| `backend/studio/bench.py`     | `python -m studio bench`: sabit küçük render'la hız ölçümü                         |
+| `backend/studio/face.py`      | YuNet yüz bulma, kırpma ve yumuşak maskeyle geri yerleştirme                       |
+| `backend/studio/hd.py`        | Real-ESRGAN: görsel 2x, video 1080p (parça parça)                                  |
+| `backend/studio/subtitles.py` | Script parçalarından / tanınan kelimelerden altyazı cue'ları                       |
+| `backend/studio/export.py`    | Klip birleştirme, altyazı çizimi, müzik ducking, -14 LUFS mastering                |
+| `tts/server.py`               | Chatterbox TTS + faster-whisper tanıma sunucusu (ayrı venv, 7870), GPU→RAM offload |
+| `tts/cleanup.py`              | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)             |
+| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                       |
 
 ## Geliştirme
 
@@ -211,4 +228,5 @@ cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 786
 
 - Videodaki bir kişiyi karakterle değiştirme: SCAIL-2 (ComfyUI'da hazır şablonu var)
 - Var olan bir videoyu dublajlama (video-to-video lipsync): ComfyUI çekirdeğindeki InfiniteTalk şimdilik yalnızca görselden video üretiyor
+- Export'ta geçiş efektleri ve kapak görseli (thumbnail) seçimi
 - İki kişilik diyalog: InfiniteTalk `two_speakers` modu

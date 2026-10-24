@@ -160,3 +160,44 @@ def test_chatterbox_engine_offload_moves_weights_and_voices():
     log.clear()
     engine._move(engine.device)  # what synthesize() does first
     assert len(log) == 5 and {d for _, d in log} == {"cuda"} and engine._resident == "cuda"
+
+
+class FakeWhisper:
+    def __init__(self):
+        self.calls = []
+
+    def transcribe(self, audio, language):
+        self.calls.append((audio[:4], language))
+        return {"language": language or "tr", "words": [{"text": "Merhaba", "start": 0.1, "end": 0.6}]}
+
+
+def test_transcribe_loads_once_and_reports_failures():
+    loads = []
+
+    def factory():
+        loads.append(1)
+        return FakeWhisper()
+
+    client = TestClient(create_app(lambda: FakeEngine(), transcriber_factory=factory, postprocess=False))
+    for _ in range(2):
+        r = client.post("/transcribe", data={"language": "tr"}, files={"audio": ("a.wav", b"RIFFdata", "audio/wav")})
+        assert r.status_code == 200 and r.json()["words"][0]["text"] == "Merhaba"
+    assert len(loads) == 1
+
+    def broken():
+        raise RuntimeError("model not downloaded")
+
+    client = TestClient(create_app(lambda: FakeEngine(), transcriber_factory=broken, postprocess=False))
+    r = client.post("/transcribe", files={"audio": ("a.wav", b"RIFF", "audio/wav")})
+    assert r.status_code == 503 and "model not downloaded" in r.json()["detail"]
+
+
+def test_whisper_transcriber_matches_faster_whisper_api():
+    fw = pytest.importorskip("faster_whisper")
+    from faster_whisper.utils import _MODELS
+
+    assert "large-v3-turbo" in _MODELS  # the name WhisperTranscriber asks for
+    import inspect
+
+    params = inspect.signature(fw.WhisperModel.transcribe).parameters
+    assert {"language", "word_timestamps", "vad_filter", "condition_on_previous_text"} <= set(params)

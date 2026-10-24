@@ -190,3 +190,45 @@ class TalkRequest(VoiceSettings, MotionBase):
         if bool(self.text.strip()) == bool(self.speech_id):
             raise ValueError("provide either a script or a speech clip")
         return self
+
+
+class CueText(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    text: str = Field(max_length=200)
+
+
+class CuesUpdate(BaseModel):
+    cues: list[CueText] = Field(max_length=500)
+
+
+class TranscribeRequest(BaseModel):
+    language: str | None = None  # None: detect
+
+
+class ExportItem(BaseModel):
+    clip_id: str
+    start: float = Field(0.0, ge=0)
+    end: float | None = Field(None, gt=0)  # None: to the end of the clip
+
+
+class SubtitleOptions(BaseModel):
+    enabled: bool = True
+    style: Literal["reels", "minimal"] = "reels"
+    position: Literal["lower", "middle"] = "lower"
+
+
+class MusicOptions(BaseModel):
+    clip_id: str
+    start: float = Field(0.0, ge=0)
+    volume_db: float = Field(-16.0, ge=-40, le=0)
+    duck: bool = True  # lower the music while someone speaks
+
+
+class ExportRequest(BaseModel):
+    character_id: str
+    items: list[ExportItem] = Field(min_length=1, max_length=20)
+    format: Literal["9:16", "4:5", "1:1", "16:9"] = "9:16"
+    subtitles: SubtitleOptions = Field(default_factory=SubtitleOptions)
+    music: MusicOptions | None = None
+    hd: bool = False  # upscale clips to 1080p first (reuses earlier HD copies)

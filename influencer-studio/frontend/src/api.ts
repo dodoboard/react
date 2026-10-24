@@ -3,6 +3,9 @@ import type {
   CharacterDetail,
   CharacterSpec,
   ClipMeta,
+  Cue,
+  CuesResponse,
+  ExportFormat,
   Health,
   ImageMeta,
   Job,
@@ -114,6 +117,21 @@ export interface TalkBody extends VoiceOptions {
   prompt: string;
 }
 
+export interface ExportItem {
+  clip_id: string;
+  start: number;
+  end: number | null;
+}
+
+export interface ExportBody {
+  character_id: string;
+  items: ExportItem[];
+  format: ExportFormat;
+  hd: boolean;
+  subtitles: { enabled: boolean; style: "reels" | "minimal"; position: "lower" | "middle" };
+  music: { clip_id: string; start: number; volume_db: number; duck: boolean } | null;
+}
+
 /** XHR upload so large dance clips can report progress. */
 function uploadWithProgress<T>(url: string, file: File, onProgress: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -187,6 +205,12 @@ export const api = {
   characterClips: (characterId: string) => request<ClipMeta[]>(`/api/characters/${characterId}/clips`),
   deleteClip: (id: string) => request<void>(`/api/clips/${id}`, { method: "DELETE" }),
   upscaleClip: (id: string) => request<Job<ClipMeta>>(`/api/clips/${id}/upscale`, { method: "POST" }),
+  cues: (clipId: string) => request<CuesResponse>(`/api/clips/${clipId}/cues`),
+  saveCues: (clipId: string, cues: Pick<Cue, "start" | "end" | "text">[]) =>
+    request<CuesResponse>(`/api/clips/${clipId}/cues`, json("PATCH", { cues })),
+  transcribe: (clipId: string, language: string | null) =>
+    request<Job<ClipMeta>>(`/api/clips/${clipId}/transcribe`, json("POST", { language })),
+  exportVideo: (body: ExportBody) => request<Job<ClipMeta>>("/api/exports", json("POST", body)),
 
   voiceSchema: () => request<VoiceSchema>("/api/voice/schema"),
   voiceHealth: () => request<VoiceHealth>("/api/voice/health"),
