@@ -6,6 +6,9 @@
 Runs in its own virtualenv: Chatterbox pins torch/transformers versions that would clash with
 ComfyUI's. Weights (~3 GB) are downloaded from Hugging Face on first use. Every output carries
 Resemble's inaudible Perth watermark, which marks the audio as AI-generated.
+
+ComfyUI needs the same GPU, so the studio calls /offload after each script: the model moves to
+system RAM (seconds to bring back, instead of reloading from disk) and its VRAM is released.
 """
 
 from __future__ import annotations
@@ -35,6 +38,9 @@ class Engine(Protocol):
                    cfg_weight: float, temperature: float, seed: int | None) -> bytes:
         """Returns mono 16-bit PCM at `sample_rate`."""
 
+    def offload(self) -> bool:
+        """Release GPU memory until the next request; True if anything moved."""
+
 
 class ChatterboxEngine:
     def __init__(self, device: str | None = None):
@@ -48,6 +54,26 @@ class ChatterboxEngine:
         self.languages = dict(SUPPORTED_LANGUAGES)
         self._default_voice = self.model.conds  # built-in voice from conds.pt
         self._voices: OrderedDict[str, object] = OrderedDict()
+        self._resident = self.device  # where the weights are right now
+
+    def _move(self, device: str) -> None:
+        if self._resident == device:
+            return
+        for module in (self.model.t3, self.model.s3gen, self.model.ve):
+            module.to(device)
+        self.model.device = device
+        self._default_voice = self._default_voice.to(device)
+        for key, conds in self._voices.items():
+            self._voices[key] = conds.to(device)
+        self._resident = device
+        if device == "cpu" and self._torch.cuda.is_available():
+            self._torch.cuda.empty_cache()
+
+    def offload(self) -> bool:
+        if self.device == "cpu" or self._resident == "cpu":
+            return False
+        self._move("cpu")
+        return True
 
     def _conditionals(self, voice: bytes | None, exaggeration: float):
         if voice is None:
@@ -68,6 +94,7 @@ class ChatterboxEngine:
         return self._voices[key]
 
     def synthesize(self, text, language, voice, exaggeration, cfg_weight, temperature, seed):
+        self._move(self.device)  # back from an /offload
         self.model.conds = self._conditionals(voice, exaggeration)
         if seed is not None:
             self._torch.manual_seed(seed)
@@ -99,8 +126,11 @@ def _planned_device() -> str:
 
 
 def create_app(engine_factory: Callable[[], Engine] | None = None,
-               planned_device: Callable[[], str] = _planned_device) -> FastAPI:
+               planned_device: Callable[[], str] = _planned_device, postprocess: bool = True) -> FastAPI:
+    """`postprocess` trims silence and evens out loudness (needs numpy + pyloudnorm)."""
     factory = engine_factory or (lambda: ChatterboxEngine(os.environ.get("TTS_DEVICE") or None))
+    if postprocess:
+        from cleanup import clean_reference, clean_speech
     app = FastAPI(title="Influencer Studio TTS")
     lock = threading.Lock()  # one model, one GPU: synthesize sequentially
     state: dict = {"engine": None, "error": None}
@@ -124,6 +154,14 @@ def create_app(engine_factory: Callable[[], Engine] | None = None,
             state["device"] = planned_device()
         return {"ok": True, "loaded": e is not None, "device": e.device if e else state["device"],
                 "languages": e.languages if e else None, "error": state["error"]}
+
+    @app.post("/offload")
+    def offload() -> dict:
+        e = state["engine"]
+        if e is None or not hasattr(e, "offload"):
+            return {"offloaded": False}
+        with lock:
+            return {"offloaded": e.offload()}
 
     @app.post("/warmup")
     def warmup() -> dict:
@@ -149,8 +187,12 @@ def create_app(engine_factory: Callable[[], Engine] | None = None,
         if language not in e.languages:
             raise HTTPException(422, f"unsupported language '{language}'")
         reference = voice.file.read() if voice else None
+        if postprocess and reference:
+            reference = clean_reference(reference)
         with lock:
             pcm = e.synthesize(text, language, reference, exaggeration, cfg_weight, temperature, seed)
+        if postprocess:
+            pcm = clean_speech(pcm, e.sample_rate)
         return Response(to_wav(pcm, e.sample_rate), media_type="audio/wav")
 
     return app

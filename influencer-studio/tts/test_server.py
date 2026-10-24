@@ -4,11 +4,16 @@
 """
 
 import io
+import math
+import struct
 import wave
 
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
-from server import create_app
+from cleanup import TARGET_LUFS, clean_reference, clean_speech, loudness
+from server import ChatterboxEngine, create_app
 
 
 class FakeEngine:
@@ -24,8 +29,19 @@ class FakeEngine:
         return b"\x01\x00" * (self.sample_rate // 10 * len(text.split()))  # 0.1 s per word
 
 
-def make_client(factory, device="cpu"):
-    return TestClient(create_app(factory, planned_device=lambda: device))
+def make_client(factory, device="cpu", postprocess=False):
+    return TestClient(create_app(factory, planned_device=lambda: device, postprocess=postprocess))
+
+
+def tone(seconds, amplitude, sr=24000, before=0.0, after=0.0):
+    """Silence, a 220 Hz tone, silence: mono 16-bit PCM."""
+    n0, n1, n2 = (int(t * sr) for t in (before, seconds, after))
+    body = (int(amplitude * 32767 * math.sin(2 * math.pi * 220 * i / sr)) for i in range(n1))
+    return b"\x00\x00" * n0 + b"".join(struct.pack("<h", v) for v in body) + b"\x00\x00" * n2
+
+
+def pcm_array(pcm):
+    return np.frombuffer(pcm, dtype=np.int16).astype(np.float64) / 32768
 
 
 def test_synthesize_returns_wav_and_passes_parameters():
@@ -70,3 +86,77 @@ def test_load_failure_is_reported_and_retried():
     assert "no kernel image" in client.get("/health").json()["error"]
     assert client.post("/warmup").json()["loaded"] is True  # next request retries the load
     assert client.get("/health").json()["error"] is None
+
+
+def test_cleanup_trims_silence_and_evens_out_loudness():
+    quiet = clean_speech(tone(1.0, 0.02, before=0.5, after=0.7), 24000)
+    loud = clean_speech(tone(1.0, 0.6, before=0.1, after=0.1), 24000)
+    for pcm in (quiet, loud):
+        assert len(pcm) / 2 / 24000 == pytest.approx(1.0 + 2 * 0.06, abs=0.03)
+        assert loudness(pcm_array(pcm), 24000) == pytest.approx(TARGET_LUFS, abs=0.5)
+    assert clean_speech(b"\x00\x00" * 2400, 24000) == b"\x00\x00" * 2400  # silence stays silence
+
+
+def test_reference_becomes_trimmed_mono():
+    mono = tone(2.0, 0.3, sr=44100, before=1.0)
+    stereo = b"".join(mono[i:i + 2] * 2 for i in range(0, len(mono), 2))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(44100)
+        w.writeframes(stereo)
+    with wave.open(io.BytesIO(clean_reference(buf.getvalue()))) as w:
+        assert w.getnchannels() == 1 and w.getframerate() == 44100
+        assert w.getnframes() / 44100 == pytest.approx(2.0 + 0.06, abs=0.03)  # leading second cut
+    assert clean_reference(b"not a wav") == b"not a wav"
+
+
+class ToneEngine(FakeEngine):
+    def __init__(self):
+        super().__init__()
+        self.offloads = 0
+
+    def synthesize(self, text, *args):
+        super().synthesize(text, *args)
+        return tone(0.05 * len(text), 0.1, before=0.4, after=0.4)
+
+    def offload(self):
+        self.offloads += 1
+        return True
+
+
+def test_server_cleans_output_and_offloads():
+    engine = ToneEngine()
+    client = make_client(lambda: engine, postprocess=True)
+    assert client.post("/offload").json() == {"offloaded": False}  # nothing loaded yet
+    r = client.post("/synthesize", data={"text": "Merhaba dünya"})
+    with wave.open(io.BytesIO(r.content)) as w:
+        assert w.getnframes() / 24000 == pytest.approx(0.65 + 0.12, abs=0.03)  # padding trimmed
+    assert client.post("/offload").json() == {"offloaded": True} and engine.offloads == 1
+
+
+class Moves:
+    def __init__(self, log, name):
+        self.log, self.name = log, name
+
+    def to(self, device=None, **kw):
+        self.log.append((self.name, device or kw["device"]))
+        return self
+
+
+def test_chatterbox_engine_offload_moves_weights_and_voices():
+    log = []
+    engine = ChatterboxEngine.__new__(ChatterboxEngine)
+    engine._torch = type("T", (), {"cuda": type("C", (), {"is_available": staticmethod(lambda: False)})})
+    engine.device, engine._resident = "cuda", "cuda"
+    engine.model = type("M", (), {})()
+    engine.model.t3, engine.model.s3gen, engine.model.ve = Moves(log, "t3"), Moves(log, "s3gen"), Moves(log, "ve")
+    engine._default_voice = Moves(log, "default")
+    engine._voices = {"abc": Moves(log, "voice")}
+    assert engine.offload() is True and engine.model.device == "cpu"
+    assert sorted(log) == sorted([(n, "cpu") for n in ("t3", "s3gen", "ve", "default", "voice")])
+    assert engine.offload() is False  # already in RAM
+    log.clear()
+    engine._move(engine.device)  # what synthesize() does first
+    assert len(log) == 5 and {d for _, d in log} == {"cuda"} and engine._resident == "cuda"

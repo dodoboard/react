@@ -1,6 +1,6 @@
 import pytest
 
-from studio.turkish import chunk, normalize, number_to_words, ordinal_to_words
+from studio.turkish import PAUSES, chunk, normalize, number_to_words, ordinal_to_words
 
 
 @pytest.mark.parametrize("n,words", [
@@ -48,14 +48,28 @@ def test_normalize(text, spoken):
 def test_chunk_keeps_sentences_and_limits_length():
     text = "Merhaba! Bugün size yeni rutinimi göstereceğim. " * 10 + "\n\nİkinci paragraf burada."
     chunks = chunk(text, max_chars=120)
-    assert all(len(c) <= 120 for c in chunks)
-    assert " ".join(chunks).split() == text.split()
-    assert chunks[-1] == "İkinci paragraf burada."  # paragraphs never merge
+    assert all(len(c.spoken) <= 120 for c in chunks)
+    assert " ".join(c.display for c in chunks).split() == text.split()
+    assert chunks[-1].display == "İkinci paragraf burada."  # paragraphs never merge
+    assert chunks[-2].pause == PAUSES["paragraph"] and chunks[0].pause == PAUSES["sentence"]
 
 
 def test_chunk_splits_run_on_sentences():
     long = ", ".join(["çok uzun bir cümle parçası"] * 20)
     chunks = chunk(long, max_chars=100)
-    assert all(len(c) <= 100 for c in chunks) and " ".join(chunks).split() == long.split()
+    assert all(len(c.spoken) <= 100 for c in chunks) and " ".join(c.display for c in chunks).split() == long.split()
+    assert {c.pause for c in chunks[:-1]} == {PAUSES["clause"]}
     no_punct = "kelime " * 80
-    assert all(len(c) <= 100 for c in chunk(no_punct, max_chars=100))
+    cut = chunk(no_punct, max_chars=100)
+    assert all(len(c.spoken) <= 100 for c in cut) and cut[0].pause == PAUSES["cut"]
+
+
+def test_chunk_normalizes_each_sentence_and_keeps_the_script():
+    (c,) = chunk("Bugün %30 indirim var! 21. yüzyılın ürünü Dr. Ayşe'den, ₺49,90.")
+    assert c.display == "Bugün %30 indirim var! 21. yüzyılın ürünü Dr. Ayşe'den, ₺49,90."
+    assert c.spoken == ("Bugün yüzde otuz indirim var! yirmi birinci yüzyılın ürünü doktor Ayşeden, "
+                        "kırk dokuz lira doksan kuruş.")
+    # spoken length decides the split: a short script that expands past the limit is cut
+    numbers = "1.250.000 1.250.000 1.250.000 1.250.000 1.250.000 1.250.000."
+    assert all(len(c.spoken) <= 100 for c in chunk(numbers, max_chars=100))
+    assert chunk("Hello. World", speak=str.strip)[0].spoken == "Hello. World"

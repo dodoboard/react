@@ -80,7 +80,7 @@ class Studio:
             images = await self._render(job, prompt=prompt, aspect=req.aspect, seed=seed, count=req.count, references=refs)
             return [self.store.save_image(d, kind="candidate", caption="studio portrait", prompt=prompt, seed=seed) for d in images]
 
-        return self.jobs.submit("builder", run)
+        return self.jobs.submit("builder", run, group="flux2")
 
     def save_upload(self, data: bytes) -> dict:
         try:
@@ -151,7 +151,7 @@ class Studio:
                 ))
             return saved
 
-        return self.jobs.submit("identity_pack", run)
+        return self.jobs.submit("identity_pack", run, group="flux2")
 
     # ── content ─────────────────────────────────────────────────────────────
     def generate_content(self, character_id: str, req: ContentRequest) -> Job:
@@ -173,7 +173,7 @@ class Studio:
                 for d in images
             ]
 
-        return self.jobs.submit("content", run)
+        return self.jobs.submit("content", run, group="flux2")
 
     # ── LoRA dataset export ─────────────────────────────────────────────────
     def export_dataset(self, character_id: str) -> tuple[str, bytes]:

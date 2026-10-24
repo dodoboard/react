@@ -1,8 +1,12 @@
 """Voice studio: Turkish (and multilingual) speech with cloned voices, and lip-synced talking videos.
 
 Speech comes from the local TTS server (tts/server.py, Chatterbox Multilingual); lip-sync runs
-InfiniteTalk in ComfyUI. Scripts are normalized (numbers, %, money…) and split into sentence
-chunks, synthesized one by one and joined with short pauses.
+InfiniteTalk in ComfyUI. Scripts are split into sentence chunks, normalized (numbers, %, money…),
+synthesized one by one and joined with pauses that follow the punctuation. Each chunk's time
+span is stored with the speech clip (meta.segments) for subtitles.
+
+TTS and ComfyUI share one GPU. Before synthesis ComfyUI's models are unloaded only when its free
+VRAM is below what the TTS model needs; afterwards the TTS model is moved to system RAM.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import math
 import random
 import shutil
 import wave
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -25,11 +30,11 @@ from .motion import MotionStudio
 from .prompting import talk_prompt
 from .service import Invalid, NotFound
 from .store import Store
-from .turkish import chunk, normalize
+from .turkish import Chunk, chunk, normalize
 from .video import RESOLUTIONS, TALK_FPS, TalkParams, build_talk_graph
 
 MAX_TALK_SECONDS = 30
-SENTENCE_PAUSE = 0.25  # seconds of silence between synthesized chunks
+VRAM_POLICIES = ("auto", "free", "never")
 VOICE_REFERENCE_SECONDS = 15  # Chatterbox conditions on the first ~10 s anyway
 
 LANGUAGES = {  # Chatterbox Multilingual's languages, Turkish first
@@ -52,6 +57,13 @@ class TTSClient:
         r.raise_for_status()
         return r.json()
 
+    async def offload(self) -> None:
+        """Ask the TTS server to move its model to system RAM (best effort)."""
+        try:
+            await self._http.post("/offload", timeout=30)
+        except httpx.HTTPError:
+            pass
+
     async def synthesize(self, text: str, *, language: str, voice: bytes | None, exaggeration: float,
                          cfg_weight: float, temperature: float, seed: int | None) -> bytes:
         data = {"text": text, "language": language, "exaggeration": str(exaggeration),
@@ -68,10 +80,15 @@ class TTSClient:
         return r.content
 
 
-def join_wavs(parts: list[bytes], pause: float) -> bytes:
-    """Concatenate mono/stereo 16-bit WAVs of one sample rate with `pause` seconds of silence between."""
+def join_wavs(parts: list[bytes], pauses: list[float]) -> tuple[bytes, list[tuple[float, float]]]:
+    """Concatenate 16-bit WAVs of one format, `pauses[i]` seconds of silence after part i.
+
+    Returns the WAV and each part's (start, end) in seconds.
+    """
     out = io.BytesIO()
+    spans: list[tuple[float, float]] = []
     params = None
+    written = 0  # sample frames
     with wave.open(out, "wb") as dst:
         for i, part in enumerate(parts):
             with wave.open(io.BytesIO(part)) as src:
@@ -83,14 +100,38 @@ def join_wavs(parts: list[bytes], pause: float) -> bytes:
                 elif (src.getnchannels(), src.getsampwidth(), src.getframerate()) != params:
                     raise ValueError("TTS chunks have different audio formats")
                 if i:
-                    dst.writeframes(bytes(int(pause * params[2]) * params[0] * params[1]))
-                dst.writeframes(src.readframes(src.getnframes()))
-    return out.getvalue()
+                    gap = round(pauses[i - 1] * params[2])
+                    dst.writeframes(bytes(gap * params[0] * params[1]))
+                    written += gap
+                n = src.getnframes()
+                dst.writeframes(src.readframes(n))
+                spans.append((written / params[2], (written + n) / params[2]))
+                written += n
+    return out.getvalue(), spans
+
+
+@dataclass
+class Speech:
+    wav: bytes
+    chunks: list[Chunk]
+    spans: list[tuple[float, float]] = field(default_factory=list)
+
+    @property
+    def spoken(self) -> str:
+        return " ".join(c.spoken for c in self.chunks)
+
+    def meta(self) -> dict:
+        return {"segments": [{"start": round(a, 3), "end": round(b, 3), "text": c.display, "spoken": c.spoken}
+                             for c, (a, b) in zip(self.chunks, self.spans)]}
 
 
 class VoiceStudio:
-    def __init__(self, comfy: ComfyBackend, tts: TTSClient, store: Store, jobs: JobQueue, motion: MotionStudio):
+    def __init__(self, comfy: ComfyBackend, tts: TTSClient, store: Store, jobs: JobQueue, motion: MotionStudio,
+                 vram_policy: str = "auto", vram_gb: float = 4.0):
+        if vram_policy not in VRAM_POLICIES:
+            raise ValueError(f"vram_policy must be one of {VRAM_POLICIES}")
         self.comfy, self.tts, self.store, self.jobs, self.motion = comfy, tts, store, jobs, motion
+        self.vram_policy, self.vram_bytes = vram_policy, int(vram_gb * 2**30)
 
     # ── status ──────────────────────────────────────────────────────────────
     async def health(self) -> dict:
@@ -118,36 +159,50 @@ class VoiceStudio:
                                 seconds=min(clip["duration"], VOICE_REFERENCE_SECONDS))
         return ref.read_bytes()
 
-    async def _synthesize(self, job: Job, req: SpeakRequest | TalkRequest, voice: dict | None, work: Path,
-                          span: tuple[float, float]) -> tuple[bytes, str]:
-        text = normalize(req.text) if req.language == "tr" else req.text.strip()
-        parts = chunk(text)
-        if not parts:
-            raise Invalid("the script is empty")
+    async def _make_room(self) -> None:
+        """Unload ComfyUI's models when a GPU TTS would not fit next to them."""
+        if self.vram_policy == "never":
+            return
         try:
-            if (await self.tts.health()).get("device") not in (None, "cpu"):
-                await self.comfy.free()  # TTS and ComfyUI share the GPU: unload ComfyUI's models first
+            if (await self.tts.health()).get("device") in (None, "cpu"):
+                return
+            if self.vram_policy == "auto":
+                devices = (await self.comfy.system_stats()).get("devices") or [{}]
+                if devices[0].get("vram_free", 0) >= self.vram_bytes:
+                    return  # enough room: keep ComfyUI's models loaded for the next render
+            await self.comfy.free()
         except Exception:
-            pass  # health/free are best effort; synthesize reports a real outage
+            pass  # best effort; synthesize reports a real outage
+
+    async def _synthesize(self, job: Job, req: SpeakRequest | TalkRequest, voice: dict | None, work: Path,
+                          span: tuple[float, float]) -> Speech:
+        chunks = chunk(req.text, speak=normalize if req.language == "tr" else str.strip)
+        if not chunks:
+            raise Invalid("the script is empty")
+        await self._make_room()
         reference = await self._voice_wav(voice, work)
         seed = req.seed if req.seed is not None else random.randrange(2**31)
         wavs = []
-        for i, part in enumerate(parts):
-            wavs.append(await self.tts.synthesize(part, language=req.language, voice=reference,
-                                                  exaggeration=req.exaggeration, cfg_weight=req.cfg_weight,
-                                                  temperature=req.temperature, seed=seed + i))
-            job.progress = span[0] + (span[1] - span[0]) * (i + 1) / len(parts)
-        return join_wavs(wavs, SENTENCE_PAUSE), text
+        try:
+            for i, c in enumerate(chunks):
+                wavs.append(await self.tts.synthesize(c.spoken, language=req.language, voice=reference,
+                                                      exaggeration=req.exaggeration, cfg_weight=req.cfg_weight,
+                                                      temperature=req.temperature, seed=seed + i))
+                job.progress = span[0] + (span[1] - span[0]) * (i + 1) / len(chunks)
+        finally:
+            await self.tts.offload()  # hand the VRAM back to ComfyUI
+        wav, spans = join_wavs(wavs, [c.pause for c in chunks])
+        return Speech(wav, chunks, spans)
 
-    def _save_speech(self, wav_bytes: bytes, work: Path, *, script: str, spoken: str, character_id: str | None,
+    def _save_speech(self, speech: Speech, work: Path, *, script: str, character_id: str | None,
                      voice: dict | None, seed: int | None) -> dict:
         path = work / "speech.wav"
-        path.write_bytes(wav_bytes)
+        path.write_bytes(speech.wav)
         info = probe(path)
         caption = (script[:77] + "…") if len(script) > 80 else script
         return self.store.save_clip(path, kind="speech", ext="wav", info=info.public(), caption=caption,
-                                    prompt=spoken, seed=seed, character_id=character_id,
-                                    name=voice["name"] if voice else "default voice")
+                                    prompt=speech.spoken, seed=seed, character_id=character_id,
+                                    name=voice["name"] if voice else "default voice", meta=speech.meta())
 
     def _work(self, job: Job) -> Path:
         work = self.motion.work_dir / job.id
@@ -164,8 +219,8 @@ class VoiceStudio:
         async def run(job: Job) -> list[dict]:
             work = self._work(job)
             try:
-                wav_bytes, spoken = await self._synthesize(job, req, voice, work, (0.0, 1.0))
-                return [self._save_speech(wav_bytes, work, script=req.text.strip(), spoken=spoken,
+                speech = await self._synthesize(job, req, voice, work, (0.0, 1.0))
+                return [self._save_speech(speech, work, script=req.text.strip(),
                                           character_id=req.character_id, voice=voice, seed=req.seed)]
             finally:
                 shutil.rmtree(work, ignore_errors=True)
@@ -192,13 +247,13 @@ class VoiceStudio:
         async def run(job: Job) -> list[dict]:
             work = self._work(job)
             try:
-                if speech:
-                    src, script = self.store.clip_path(speech), speech["caption"]
-                else:
-                    wav_bytes, spoken = await self._synthesize(job, req, voice, work, (0.0, 0.1))
-                    saved = self._save_speech(wav_bytes, work, script=req.text.strip(), spoken=spoken,
+                if speech is None:
+                    synthesized = await self._synthesize(job, req, voice, work, (0.0, 0.1))
+                    track = self._save_speech(synthesized, work, script=req.text.strip(),
                                               character_id=character_id, voice=voice, seed=req.seed)
-                    src, script = self.store.clip_path(saved), saved["caption"]
+                else:
+                    track = speech
+                src = self.store.clip_path(track)
                 info = await asyncio.to_thread(probe, src)
                 if info.duration > MAX_TALK_SECONDS + 0.5:
                     raise Invalid(f"the speech runs {info.duration:.0f} s; shorten the script to {MAX_TALK_SECONDS} s")
@@ -216,8 +271,9 @@ class VoiceStudio:
                 out = work / "talk.mp4"
                 out.write_bytes(video)
                 clip = self.store.save_clip(out, kind="talk", ext="mp4", info=(await asyncio.to_thread(probe, out)).public(),
-                                            caption=script, prompt=prompt, seed=seed, character_id=character_id,
-                                            source_image_id=source["id"])
+                                            caption=track["caption"], prompt=prompt, seed=seed,
+                                            character_id=character_id, source_image_id=source["id"],
+                                            meta={"speech_id": track["id"], **track["meta"]})
                 return [clip]
             finally:
                 shutil.rmtree(work, ignore_errors=True)

@@ -24,16 +24,22 @@ class ToneEngine:
 
     def __init__(self):
         self.calls: list[dict] = []
+        self.offloads = 0
 
     def synthesize(self, text, language, voice, exaggeration, cfg_weight, temperature, seed):
         self.calls.append({"text": text, "language": language, "voice": voice, "seed": seed})
         n = int(len(text) * SECONDS_PER_CHAR * self.sample_rate)
         return b"".join(struct.pack("<h", int(7000 * math.sin(i * 0.05))) for i in range(n))
 
+    def offload(self):
+        self.offloads += 1
+        return self.device != "cpu"
+
 
 def create_fake_tts(engine: ToneEngine | None = None):
     engine = engine or ToneEngine()
-    app = create_app(lambda: engine, planned_device=lambda: engine.device)
+    # no clean-up: output lengths stay exact (cleanup.py is tested in tts/test_server.py)
+    app = create_app(lambda: engine, planned_device=lambda: engine.device, postprocess=False)
     app.state.engine = engine
     return app
 

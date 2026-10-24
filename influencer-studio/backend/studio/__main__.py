@@ -1,4 +1,8 @@
-"""`python -m studio` serves the app; `python -m studio doctor` runs a tiny end-to-end FLUX.2 render."""
+"""`python -m studio` serves the app.
+
+    python -m studio doctor                 # tiny end-to-end FLUX.2 render
+    python -m studio bench image|motion|talk [runs]   # time a small fixed render
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ import time
 import uvicorn
 
 from .api import create_app
+from .bench import bench
 from .comfy import ComfyClient
 from .flux2 import PROFILES, build_graph
 from .settings import Settings
@@ -45,8 +50,12 @@ async def doctor(settings: Settings) -> int:
 
 def main() -> None:
     settings = Settings()
-    if sys.argv[1:] == ["doctor"]:
+    args = sys.argv[1:]
+    if args == ["doctor"]:
         raise SystemExit(asyncio.run(doctor(settings)))
+    if args[:1] == ["bench"]:
+        runs = int(args[2]) if len(args) > 2 and args[2].isdigit() else 2
+        raise SystemExit(asyncio.run(bench(settings, args[1] if len(args) > 1 else "", runs)))
     print(f"Influencer Studio: http://{settings.host}:{settings.port}  (ComfyUI: {settings.comfy_url}, model: {settings.profile})")
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info")
 

@@ -22,3 +22,7 @@ class Settings:
     # Wan-Animate-2 pose cache kept in system RAM: int4 (~3 GB at 480p), int8 (~6 GB), default, or off.
     pose_cache: str = field(default_factory=lambda: _env("POSE_CACHE", "int4"))
     tts_url: str = field(default_factory=lambda: _env("TTS_URL", "http://127.0.0.1:7870"))
+    # Before GPU TTS: "auto" unloads ComfyUI's models only if it has less than tts_vram_gb free,
+    # "free" always unloads them, "never" leaves them (TTS on CPU, or a GPU with room for both).
+    tts_vram: str = field(default_factory=lambda: _env("TTS_VRAM", "auto"))
+    tts_vram_gb: float = field(default_factory=lambda: float(_env("TTS_VRAM_GB", "4")))

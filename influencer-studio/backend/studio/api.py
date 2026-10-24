@@ -18,7 +18,7 @@ from .models import (
     UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
-from .voice import TTSClient, VoiceStudio
+from .voice import VRAM_POLICIES, TTSClient, VoiceStudio
 from .voice import public_schema as voice_schema
 from .prompting import character_prompt
 from .service import Invalid, NotFound, Studio
@@ -43,7 +43,9 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     motion = MotionStudio(comfy, store, jobs, settings.data_dir / "work",
                           None if settings.pose_cache == "off" else settings.pose_cache)
     tts = tts or TTSClient(settings.tts_url)
-    voice = VoiceStudio(comfy, tts, store, jobs, motion)
+    if settings.tts_vram not in VRAM_POLICIES:
+        raise SystemExit(f"STUDIO_TTS_VRAM must be one of {', '.join(VRAM_POLICIES)}")
+    voice = VoiceStudio(comfy, tts, store, jobs, motion, settings.tts_vram, settings.tts_vram_gb)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

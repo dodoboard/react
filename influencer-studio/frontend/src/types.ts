@@ -114,6 +114,7 @@ export interface ClipMeta {
   fps: number;
   duration: number;
   has_audio: boolean;
+  meta: Record<string, unknown>;
   source_image_id: string | null;
   created_at: number;
   url: string;

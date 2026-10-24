@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS clips (
     duration REAL NOT NULL DEFAULT 0,
     has_audio INTEGER NOT NULL DEFAULT 0,
     source_image_id TEXT,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}'  -- JSON: speech segments, subtitles, HD source…
 );
 CREATE INDEX IF NOT EXISTS clips_by_character ON clips(character_id, created_at);
 """
@@ -83,7 +84,9 @@ class Store:
         columns = {r["name"] for r in self._db.execute("PRAGMA table_info(characters)")}
         if "voice_id" not in columns:  # databases created before the voice studio
             self._db.execute("ALTER TABLE characters ADD COLUMN voice_id TEXT")
-            self._db.commit()
+        if "meta" not in {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}:
+            self._db.execute("ALTER TABLE clips ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'")
+        self._db.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -159,16 +162,31 @@ class Store:
         seed: int | None = None,
         character_id: str | None = None,
         source_image_id: str | None = None,
+        meta: dict | None = None,
     ) -> dict:
         """Moves `src` into the store. `info` is a MediaInfo.public() dict."""
         clip_id = _new_id()
         src.replace(self.clips_dir / f"{clip_id}.{ext}")
         self._write((
-            "INSERT INTO clips VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO clips (id, character_id, kind, ext, name, caption, prompt, seed, width, height, fps,"
+            " duration, has_audio, source_image_id, created_at, meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (clip_id, character_id, kind, ext, name, caption, prompt, seed, info["width"], info["height"],
-             info["fps"], info["duration"], int(info["has_audio"]), source_image_id, time.time()),
+             info["fps"], info["duration"], int(info["has_audio"]), source_image_id, time.time(),
+             json.dumps(meta or {}, ensure_ascii=False)),
         ))
         return self.clip(clip_id)  # type: ignore[return-value]
+
+    def update_clip_meta(self, clip_id: str, **fields) -> dict | None:
+        """Merge `fields` into the clip's meta (a None value removes the key)."""
+        with self._lock:
+            row = self._db.execute("SELECT meta FROM clips WHERE id = ?", (clip_id,)).fetchone()
+            if row is None:
+                return None
+            meta = {**json.loads(row["meta"] or "{}"), **fields}
+            meta = {k: v for k, v in meta.items() if v is not None}
+            self._db.execute("UPDATE clips SET meta = ? WHERE id = ?", (json.dumps(meta, ensure_ascii=False), clip_id))
+            self._db.commit()
+        return self.clip(clip_id)
 
     def clip(self, clip_id: str) -> dict | None:
         rows = self._read("SELECT * FROM clips WHERE id = ?", (clip_id,))
@@ -255,6 +273,7 @@ def _image_row(row: sqlite3.Row) -> dict:
 def _clip_row(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["has_audio"] = bool(d["has_audio"])
+    d["meta"] = json.loads(d.get("meta") or "{}")
     d["url"] = f"/api/clips/{d['id']}"
     d["media_type"] = _MEDIA_TYPES.get(d["ext"], "application/octet-stream")
     return d

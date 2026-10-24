@@ -83,7 +83,7 @@ Dans klibi backend'de ön işlenir: seçilen aralık kesilir, 16 fps'e indirilir
 - ComfyUI'ı `--fast-disk` ile başlat; 14B modeller VRAM'e sığmaz, ComfyUI parçaları diskten akıtır.
 - 480p'de üret, gerekirse ayrıca büyüt. 720p yaklaşık iki kat süre ve bellek ister.
 - Wan-Animate-2'nin poz önbelleği üretimi yaklaşık yarıya indirir ve sistem RAM'inde durur: `STUDIO_POSE_CACHE=int4` (varsayılan, ~3 GB), `int8` (~6 GB) veya `off`.
-- Referans hız: ComfyUI'ın Wan 2.2 şablonundaki ölçüm, RTX 4090D'de 640×640 ve 4 adımla klip başına ~70–100 sn. Laptop GPU'sunda daha uzun sürer.
+- Referans hız: ComfyUI'ın Wan 2.2 şablonundaki ölçüm, RTX 4090D'de 640×640 ve 4 adımla klip başına ~70–100 sn. Laptop GPU'sunda daha uzun sürer. Kendi makinendeki hız için bkz. [16 GB ayarları](#16-gb-ayarları).
 - Dans klibi: tek kişi, tam boy, sabit kamera en iyi sonucu verir. Yalnızca hakkına sahip olduğun klipleri kullan.
 
 ## Talk
@@ -111,12 +111,36 @@ python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --
 ```
 
 - TTS <http://127.0.0.1:7870> adresinde dinler; model ağırlıkları (~3 GB) ilk istekte Hugging Face'ten iner. Farklı bir adres için `STUDIO_TTS_URL`.
-- TTS GPU'dayken stüdyo seslendirmeden önce ComfyUI'ın modellerini VRAM'den boşaltır: ikisi aynı anda 16 GB'a sığmaz. VRAM'i tamamen ComfyUI'a bırakmak için TTS'i `set TTS_DEVICE=cpu` ile başlat (daha yavaş).
+- TTS ile ComfyUI aynı GPU'yu paylaşır. Seslendirmeden önce ComfyUI'ın boş VRAM'i 4 GB'ın altındaysa modelleri boşaltılır; seslendirme bitince TTS modeli sistem RAM'ine taşınır ve VRAM ComfyUI'a döner. Ayarlar ve TTS'i tamamen CPU'da çalıştırma için bkz. [16 GB ayarları](#16-gb-ayarları).
+- Her parça ayrı seslendirilir: başındaki/sonundaki sessizlik kırpılır, ses düzeyi eşitlenir (-20 LUFS), parçalar noktalamaya göre duraklamayla birleşir (cümle sonu 0,35 sn, virgül 0,15 sn, paragraf 0,6 sn). Her parçanın zamanı altyazı için saklanır.
 - Mikrofon kaydı tarayıcıda yalnızca `http://127.0.0.1` / `localhost` ya da HTTPS üzerinden çalışır.
 - 30 sn'den uzun konuşmaları parçalara böl. Her 81 karelik pencere (~3 sn) bir önceki pencerenin son 9 karesiyle devam eder.
 - En iyi sonuç: yüzü ve ağzı net görünen, karşıdan çekilmiş bir kare.
 
 Yalnızca kendi sesini ya da açık izin aldığın birinin sesini klonla. Chatterbox her çıktıya duyulamayan bir yapay zekâ filigranı (Perth) ekler; yayınladığın konuşan videoları da yapay zekâ ile üretildiğini belirterek etiketle.
+
+## 16 GB ayarları
+
+Hızı kendi makinende ölç: aynı küçük render'ı iki kez çalıştırır (ilki model yüklemeyi de içerir), ComfyUI'ın başlatma bayraklarını da yazdırır. Bir bayrağı denemek için ComfyUI'ı onunla yeniden başlatıp tekrar ölç.
+
+```bat
+.venv\Scripts\python -m studio bench image
+.venv\Scripts\python -m studio bench motion
+.venv\Scripts\python -m studio bench talk
+```
+
+| ComfyUI bayrağı          | Ne işe yarar                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `--fast-disk`            | 14B modeller VRAM'e sığmaz; ağırlıklar NVMe'den akıtılır, 32 GB RAM'i doldurmaz               |
+| `--fast fp8_matrix_mult` | fp8 modellerde RTX 40/50'nin fp8 tensor çekirdeklerini kullanır (kaliteyi az da olsa etkiler) |
+| `--use-sage-attention`   | Daha hızlı attention. RTX 50 (sm_120) için derlenmiş `sageattention` paketi kurulu olmalı     |
+| `--reserve-vram 3.5`     | ComfyUI'ın 3,5 GB'ı boş bırakması: TTS GPU'da yanında çalışır, modeller hiç boşaltılmaz       |
+
+Stüdyo tarafı:
+
+- Kuyruk aynı modeli kullanan işleri art arda çalıştırır (ör. bekleyen görseller bir konuşan videonun arasına girmez), böylece ComfyUI her işte 10–20 GB'lık model değiştirmez. Bir iş en fazla iki kez geride kalır.
+- `STUDIO_TTS_VRAM`: `auto` (varsayılan; ComfyUI'ın boş VRAM'i `STUDIO_TTS_VRAM_GB`'ın, varsayılan 4, altındaysa modelleri boşaltır), `free` (her seslendirmede boşaltır), `never` (hiç boşaltmaz; `--reserve-vram` ile ya da TTS CPU'dayken).
+- TTS'i tamamen CPU'da çalıştırmak için `set TTS_DEVICE=cpu` ile başlat: GPU tamamen ComfyUI'a kalır, seslendirme yavaşlar.
 
 ## Mimari
 
@@ -139,8 +163,11 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
 | `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                            |
 | `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları          |
 | `backend/studio/turkish.py`   | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme           |
-| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync                    |
-| `tts/server.py`               | Chatterbox Multilingual TTS sunucusu (ayrı venv, port 7870)                       |
+| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı    |
+| `backend/studio/jobs.py`      | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır               |
+| `backend/studio/bench.py`     | `python -m studio bench`: sabit küçük render'la hız ölçümü                        |
+| `tts/server.py`               | Chatterbox Multilingual TTS sunucusu (ayrı venv, port 7870), GPU→RAM offload      |
+| `tts/cleanup.py`              | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)            |
 | `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                      |
 
 ## Geliştirme
@@ -149,6 +176,7 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
 cd backend && pip install -e ".[dev]" && pytest
 python -m tests.fake_comfy --port 8188     # GPU'suz sahte ComfyUI (arayüz geliştirme için)
 python -m tests.fake_tts --port 7870       # modelsiz sahte TTS
+cd tts && .venv/bin/python -m pip install pytest && .venv/bin/python -m pytest test_server.py
 STUDIO_DATA_DIR=/tmp/studio python -m studio
 cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 7860
 ```

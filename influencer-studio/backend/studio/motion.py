@@ -33,6 +33,7 @@ UPLOAD_KINDS = {  # audio kinds also accept videos (their soundtrack) and browse
     "speech": AUDIO_EXTS | VIDEO_EXTS,  # your own voice-over to lip-sync
 }
 MIN_SECONDS = {"voice": 3.0}
+MODEL_GROUPS = {"dance": "wan-animate", "music_dance": "wan-dancer", "motion": "wan22"}  # see jobs.py
 MAX_SOURCE_SECONDS = 600
 
 
@@ -130,7 +131,7 @@ class MotionStudio:
             finally:
                 shutil.rmtree(work, ignore_errors=True)
 
-        return self.jobs.submit(kind, run)
+        return self.jobs.submit(kind, run, group=MODEL_GROUPS[kind])
 
     async def upload_source(self, source: dict) -> str:
         return await self.comfy.upload(self.store.image_path(source["id"]).read_bytes(), f"studio_{source['id']}.png")

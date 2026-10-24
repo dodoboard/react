@@ -10,6 +10,8 @@ times, currencies and common abbreviations are spelled out before synthesis:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Callable
 
 _ONES = ["", "bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz"]
 _TENS = ["", "on", "yirmi", "otuz", "kırk", "elli", "altmış", "yetmiş", "seksen", "doksan"]
@@ -120,24 +122,69 @@ def _spell(integer: str, decimals: str | None) -> str:
     return f"{words} virgül {_decimals(decimals)}" if decimals else words
 
 
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+PAUSES = {"paragraph": 0.6, "sentence": 0.35, "clause": 0.15, "cut": 0.05}  # seconds after a chunk
+_BOUNDARY = re.compile(r"[.!?…]+[\"'”’»)]*\s+")
 
 
-def chunk(text: str, max_chars: int = 250) -> list[str]:
-    """Split into TTS-sized chunks at sentence, then clause, boundaries."""
-    chunks: list[str] = []
+@dataclass(frozen=True)
+class Chunk:
+    spoken: str  # what the TTS reads (normalized)
+    display: str  # the script as written, for subtitles
+    pause: float  # silence to insert after this chunk
+
+
+def _sentences(paragraph: str) -> list[str]:
+    """Split at sentence ends, but not inside "21. yüzyıl", "vb. gibi" or "Dr. Ayşe"."""
+    out, start = [], 0
+    for m in _BOUNDARY.finditer(paragraph):
+        rest = paragraph[m.end():]
+        word = paragraph[start:m.end()].split()[-1]
+        if rest[:1].islower() or word in _ABBREVIATIONS:
+            continue
+        out.append(paragraph[start:m.end()].strip())
+        start = m.end()
+    return out + ([paragraph[start:].strip()] if paragraph[start:].strip() else [])
+
+
+def _pieces(sentence: str, max_chars: int, speak: Callable[[str], str]) -> list[tuple[str, str]]:
+    """(display, spoken) pieces of one sentence whose spoken form fits in `max_chars`."""
+    budget = max_chars
+    while True:  # normalization lengthens text ("1.250.000" → 30 chars), so shrink until it fits
+        parts = [sentence] if len(sentence) <= budget else _split_long(sentence, budget)
+        pairs = [(part, speak(part)) for part in parts]
+        if budget < 20 or all(len(spoken) <= max_chars for _, spoken in pairs):
+            return [(d, s) for d, s in pairs if s]
+        budget = int(budget * 0.7)
+
+
+def _pause_after(display: str) -> float:
+    end = display.rstrip("\"'”’»)")[-1:]
+    return PAUSES["sentence"] if end in ".!?…" else PAUSES["clause"] if end in ",;:" else PAUSES["cut"]
+
+
+def chunk(text: str, max_chars: int = 250, speak: Callable[[str], str] = normalize) -> list[Chunk]:
+    """Split a script into TTS-sized chunks at paragraph, sentence, then clause boundaries.
+
+    Each sentence is normalized on its own, so the written text of every chunk is kept for
+    subtitles. Pauses follow the punctuation the chunk ends with.
+    """
+    chunks: list[Chunk] = []
     for paragraph in filter(None, (p.strip() for p in re.split(r"\n\s*\n", text))):
-        current = ""
-        for sentence in _SENTENCE_END.split(paragraph.replace("\n", " ")):
-            pieces = [sentence] if len(sentence) <= max_chars else _split_long(sentence, max_chars)
-            for piece in pieces:
-                if current and len(current) + 1 + len(piece) > max_chars:
-                    chunks.append(current)
-                    current = piece
-                else:
-                    current = f"{current} {piece}".strip()
-        if current:
-            chunks.append(current)
+        current: list[tuple[str, str]] = []
+
+        def flush(pause: float | None = None) -> None:
+            if current:
+                display = " ".join(d for d, _ in current)
+                spoken = " ".join(s for _, s in current)
+                chunks.append(Chunk(spoken, display, _pause_after(display) if pause is None else pause))
+                current.clear()
+
+        for sentence in _sentences(paragraph.replace("\n", " ")):
+            for display, spoken in _pieces(sentence, max_chars, speak):
+                if current and sum(len(s) + 1 for _, s in current) + len(spoken) > max_chars:
+                    flush()
+                current.append((display, spoken))
+        flush(PAUSES["paragraph"])
     return chunks
 
 

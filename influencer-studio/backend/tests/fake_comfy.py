@@ -127,6 +127,7 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     app.state.models = ALL_MODELS if models is None else models
     app.state.prompts = []  # graphs received, for test assertions
     app.state.frees = 0
+    app.state.vram_free = 2 * 2**30  # a render just finished: models still loaded
     clients: dict[str, WebSocket] = {}
     inputs: dict[str, bytes] = {}
     outputs: dict[str, bytes] = {}
@@ -134,7 +135,8 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
 
     @app.get("/system_stats")
     def system_stats() -> dict:
-        return {"system": {"comfyui_version": "fake"}, "devices": [{"name": "Fake GPU", "vram_total": 16 * 2**30}]}
+        return {"system": {"comfyui_version": "fake"},
+                "devices": [{"name": "Fake GPU", "vram_total": 16 * 2**30, "vram_free": app.state.vram_free}]}
 
     @app.post("/free")
     def free(body: dict) -> dict:

@@ -5,7 +5,8 @@ import av
 import pytest
 
 from studio.video import TALK_FPS, talk_windows
-from studio.voice import SENTENCE_PAUSE, join_wavs
+from studio.turkish import PAUSES
+from studio.voice import join_wavs
 from tests.conftest import wait_job
 from tests.fake_tts import SECONDS_PER_CHAR
 from tests.media_fixtures import make_recording, make_wav
@@ -70,8 +71,17 @@ def test_turkish_speech_is_normalized_chunked_and_joined(client, fake_tts, chara
     assert "iki bin yirmi altıda" in calls[1]["text"] and "%" not in "".join(c["text"] for c in calls)
     assert [c["seed"] for c in calls] == list(range(7, 7 + len(calls)))
     assert all(c["voice"] and c["voice"][:4] == b"RIFF" for c in calls)  # the character's voice, as WAV
-    expected = sum(len(c["text"]) for c in calls) * SECONDS_PER_CHAR + SENTENCE_PAUSE * (len(calls) - 1)
+    expected = sum(len(c["text"]) for c in calls) * SECONDS_PER_CHAR + PAUSES["sentence"] * (len(calls) - 1)
     assert wav_seconds(client.get(clip["url"]).content) == pytest.approx(expected, abs=0.05)
+
+    # each chunk's span and written text are kept for subtitles
+    segments = clip["meta"]["segments"]
+    assert [s["spoken"] for s in segments] == [c["text"] for c in calls]
+    assert segments[0]["text"].startswith("Bugün %20 indirim var!") and "2026'da" in segments[1]["text"]
+    assert segments[0]["start"] == 0 and segments[-1]["end"] == pytest.approx(expected, abs=0.01)
+    gap = segments[1]["start"] - segments[0]["end"]
+    assert gap == pytest.approx(PAUSES["sentence"], abs=0.001)
+    assert fake_tts.app.state.engine.offloads == 1  # VRAM handed back after the script
 
 
 def test_other_languages_are_not_normalized(client, fake_tts):
@@ -103,12 +113,21 @@ def test_talk_from_script(client, fake_comfy, fake_tts, character):
     with av.open(io.BytesIO(client.get(talk["url"]).content)) as c:
         assert [s.type for s in c.streams] == ["video", "audio"]
     assert fake_comfy.app.state.frees == 0  # TTS on CPU: no need to unload ComfyUI
+    assert talk["meta"]["speech_id"] == speech["id"] and talk["meta"]["segments"] == speech["meta"]["segments"]
 
 
-def test_gpu_tts_unloads_comfyui_first(client, fake_comfy, fake_tts):
+def test_gpu_tts_unloads_comfyui_only_when_vram_is_short(client, fake_comfy, fake_tts):
     fake_tts.app.state.engine.device = "cuda"
-    job = wait_job(client, client.post("/api/voice/speak", json={"text": "Selam!"}).json())
-    assert job["status"] == "done" and fake_comfy.app.state.frees == 1
+    speak = lambda: wait_job(client, client.post("/api/voice/speak", json={"text": "Selam!"}).json())  # noqa: E731
+    assert speak()["status"] == "done" and fake_comfy.app.state.frees == 1  # 2 GB free < 4 GB needed
+    fake_comfy.app.state.vram_free = 9 * 2**30
+    assert speak()["status"] == "done" and fake_comfy.app.state.frees == 1  # room for both: keep models
+    client.app.state.voice.vram_policy = "free"
+    assert speak()["status"] == "done" and fake_comfy.app.state.frees == 2
+    client.app.state.voice.vram_policy = "never"
+    fake_comfy.app.state.vram_free = 0
+    assert speak()["status"] == "done" and fake_comfy.app.state.frees == 2
+    assert fake_tts.app.state.engine.offloads == 4
 
 
 def test_talk_from_uploaded_speech_and_validation(client, fake_comfy, fake_tts, character, tmp_path):
@@ -144,6 +163,8 @@ def test_join_wavs_inserts_pauses():
             w.writeframes(b"\x10\x00" * int(seconds * rate))
         return buf.getvalue()
 
-    assert wav_seconds(join_wavs([tone(1), tone(0.5), tone(0.25)], 0.2)) == pytest.approx(2.15)
+    wav, spans = join_wavs([tone(1), tone(0.5), tone(0.25)], [0.2, 0.6, 0.35])
+    assert wav_seconds(wav) == pytest.approx(2.55)
+    assert spans == [(0, 1), (1.2, 1.7), (2.3, 2.55)]
     with pytest.raises(ValueError):
-        join_wavs([tone(1), tone(1, rate=16000)], 0.2)
+        join_wavs([tone(1), tone(1, rate=16000)], [0.2])
