@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { StudioContext, useHashRoute } from "./hooks";
+import { BatchPage } from "./pages/BatchPage";
 import { BuilderPage } from "./pages/BuilderPage";
 import { CharacterPage } from "./pages/CharacterPage";
 import { CharactersPage } from "./pages/CharactersPage";
@@ -15,6 +16,7 @@ const NAV = [
   { path: "builder", label: "Builder" },
   { path: "characters", label: "Influencers" },
   { path: "create", label: "Create" },
+  { path: "batch", label: "Pack" },
   { path: "motion", label: "Motion" },
   { path: "talk", label: "Talk" },
   { path: "export", label: "Export" },
@@ -94,6 +96,8 @@ export function App() {
       <CharactersPage />
     ) : section === "create" ? (
       <CreatePage characterId={param} navigate={navigate} />
+    ) : section === "batch" ? (
+      <BatchPage key={param} characterId={param} navigate={navigate} />
     ) : section === "motion" ? (
       <MotionPage characterId={param} navigate={navigate} />
     ) : section === "talk" ? (

@@ -1129,3 +1129,52 @@ select.select--sm {
 .queue__job--done {
   opacity: 0.75;
 }
+
+/* ── content packs ───────────────────────────────────────────────────── */
+.pack-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pack-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.pack-row select:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.pack-talk {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+}
+.pack-preview {
+  margin: 0;
+  line-height: 1.5;
+}
+.batch {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.batch__jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.batch .clip-grid {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}

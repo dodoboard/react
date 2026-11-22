@@ -173,3 +173,27 @@ export interface CuesResponse {
 }
 
 export type ExportFormat = "9:16" | "4:5" | "1:1" | "16:9";
+
+export interface ScriptTemplate {
+  id: string;
+  label: string;
+  fields: { key: string; label: string }[];
+  text: string;
+  prompt: string;
+}
+
+export interface BatchJob {
+  job_id: string;
+  role: "post" | "talk" | "export";
+  label: string;
+  job: Job<ImageMeta | ClipMeta>;
+}
+
+export interface Batch {
+  id: string;
+  character_id: string;
+  created_at: number;
+  jobs: BatchJob[];
+  finished: boolean;
+  progress: number;
+}

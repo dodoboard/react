@@ -3,6 +3,7 @@ import type {
   CharacterDetail,
   CharacterSpec,
   ClipMeta,
+  Batch,
   Cue,
   CuesResponse,
   ExportFormat,
@@ -15,6 +16,7 @@ import type {
   Orientation,
   Resolution,
   Schema,
+  ScriptTemplate,
   VoiceHealth,
   VoiceSchema,
 } from "./types";
@@ -132,6 +134,14 @@ export interface ExportBody {
   music: { clip_id: string; start: number; volume_db: number; duck: boolean } | null;
 }
 
+export interface BatchBody {
+  posts: { preset_id: string | null; prompt: string; count: number; aspect: string; seed: null; face_detail: boolean }[];
+  talks: { text: string; template_id: string | null; values: Record<string, string>; prompt: string }[];
+  export: boolean;
+  format: ExportFormat;
+  hd: boolean;
+}
+
 /** XHR upload so large dance clips can report progress. */
 function uploadWithProgress<T>(url: string, file: File, onProgress: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -212,6 +222,11 @@ export const api = {
     request<CuesResponse>(`/api/clips/${clipId}/cues`, json("PATCH", { cues })),
   transcribe: (clipId: string, language: string | null) =>
     request<Job<ClipMeta>>(`/api/clips/${clipId}/transcribe`, json("POST", { language })),
+  scripts: () => request<ScriptTemplate[]>("/api/scripts"),
+  createBatch: (characterId: string, body: BatchBody) =>
+    request<Batch>(`/api/characters/${characterId}/batches`, json("POST", body)),
+  batches: (characterId: string) => request<Batch[]>(`/api/characters/${characterId}/batches`),
+  batchZipUrl: (batchId: string) => `/api/batches/${batchId}.zip`,
   exportVideo: (body: ExportBody) => request<Job<ClipMeta>>("/api/exports", json("POST", body)),
 
   voiceSchema: () => request<VoiceSchema>("/api/voice/schema"),

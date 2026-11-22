@@ -232,3 +232,25 @@ class ExportRequest(BaseModel):
     subtitles: SubtitleOptions = Field(default_factory=SubtitleOptions)
     music: MusicOptions | None = None
     hd: bool = False  # upscale clips to 1080p first (reuses earlier HD copies)
+
+
+class BatchTalk(BaseModel):
+    text: str = Field("", max_length=1500)
+    template_id: str | None = None  # with `values`, instead of `text`
+    values: dict[str, str] = Field(default_factory=dict)
+    prompt: str = Field("", max_length=300)
+    source_image_id: str | None = None  # default: the character's portrait
+
+
+class BatchRequest(BaseModel):
+    posts: list[ContentRequest] = Field(default_factory=list, max_length=20)
+    talks: list[BatchTalk] = Field(default_factory=list, max_length=10)
+    export: bool = True  # each talking video also as a captioned 9:16 post
+    format: Literal["9:16", "4:5", "1:1", "16:9"] = "9:16"
+    hd: bool = False
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> BatchRequest:
+        if not self.posts and not self.talks:
+            raise ValueError("add at least one post or talking video")
+        return self

@@ -143,6 +143,15 @@ Klipleri tek bir paylaşıma hazır videoda birleştirir: Talk/Motion kartların
 
 Altyazı fontu Poppins ExtraBold (SIL OFL 1.1), `backend/studio/assets/fonts/` içinde lisansıyla birlikte.
 
+## İçerik paketi (Pack)
+
+Bir haftalık içeriği tek seferde kuyruğa ekler: sahne preset'lerinden gönderiler (her biri 1–4 görsel, Face detail açık) ve Türkçe script şablonlarından konuşan videolar. Şablonlar: ürün tanıtımı, indirim duyurusu, günlük vlog girişi, soru-cevap, dürüst yorum. Alanları doldurmak yeterli; `%30`, `₺499,90` gibi değerler doğru okunur.
+
+- Önce tüm görseller, sonra videolar çalışır; modeller bir kez yüklenir.
+- İstenirse her konuşan video bitince otomatik olarak altyazılı 9:16 export'u da üretilir.
+- Bir iş hata verirse diğerleri devam eder; her iş kuyruk panelinden iptal edilebilir.
+- **Download all (.zip)** paketteki tüm görselleri ve videoları indirir.
+
 ## HD ve yüz iyileştirme
 
 | Eylem       | Nerede                       | Ne yapar                                                                                               |
@@ -194,27 +203,29 @@ React (Vite) ──/api──► FastAPI ──HTTP + WebSocket──► ComfyUI
                          └─ HTTP ──► TTS sunucusu (tts/, Chatterbox, ayrı venv)
 ```
 
-| Dosya                         | Görev                                                                              |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| `backend/studio/catalog.py`   | Özellik kataloğu, preset'ler, açılar. Arayüz buradan çizilir (tek kaynak)          |
-| `backend/studio/prompting.py` | Seçimleri doğal dilde FLUX.2 prompt'una derler                                     |
-| `backend/studio/flux2.py`     | Model profilleri + ComfyUI API grafı (ComfyUI'ın resmi FLUX.2 şablonlarıyla aynı)  |
-| `backend/studio/comfy.py`     | ComfyUI istemcisi: upload, `/prompt`, `/ws` ilerleme, `/history`                   |
-| `backend/studio/service.py`   | Builder, karakter, kimlik paketi, içerik, veri seti                                |
-| `backend/studio/video.py`     | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                      |
-| `backend/studio/media.py`     | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                             |
-| `backend/studio/motion.py`    | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları           |
-| `backend/studio/turkish.py`   | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme            |
-| `backend/studio/voice.py`     | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı     |
-| `backend/studio/jobs.py`      | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır                |
-| `backend/studio/bench.py`     | `python -m studio bench`: sabit küçük render'la hız ölçümü                         |
-| `backend/studio/face.py`      | YuNet yüz bulma, kırpma ve yumuşak maskeyle geri yerleştirme                       |
-| `backend/studio/hd.py`        | Real-ESRGAN: görsel 2x, video 1080p (parça parça)                                  |
-| `backend/studio/subtitles.py` | Script parçalarından / tanınan kelimelerden altyazı cue'ları                       |
-| `backend/studio/export.py`    | Klip birleştirme, altyazı çizimi, müzik ducking, -14 LUFS mastering                |
-| `tts/server.py`               | Chatterbox TTS + faster-whisper tanıma sunucusu (ayrı venv, 7870), GPU→RAM offload |
-| `tts/cleanup.py`              | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)             |
-| `frontend/src/pages/`         | Builder, Influencers, karakter sayfası, Create, Motion, Talk                       |
+| Dosya                          | Görev                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| `backend/studio/catalog.py`    | Özellik kataloğu, preset'ler, açılar. Arayüz buradan çizilir (tek kaynak)          |
+| `backend/studio/prompting.py`  | Seçimleri doğal dilde FLUX.2 prompt'una derler                                     |
+| `backend/studio/flux2.py`      | Model profilleri + ComfyUI API grafı (ComfyUI'ın resmi FLUX.2 şablonlarıyla aynı)  |
+| `backend/studio/comfy.py`      | ComfyUI istemcisi: upload, `/prompt`, `/ws` ilerleme, `/history`                   |
+| `backend/studio/service.py`    | Builder, karakter, kimlik paketi, içerik, veri seti                                |
+| `backend/studio/video.py`      | Video modelleri + Wan-Animate-2, Wan-Dancer, Wan 2.2 grafları                      |
+| `backend/studio/media.py`      | PyAV ile klip kesme, fps/boyut dönüştürme, ses çıkarma                             |
+| `backend/studio/motion.py`     | Motion işleri: yükleme doğrulama, dans, müzikle dans, hareket şablonları           |
+| `backend/studio/turkish.py`    | Türkçe metin normalleştirme (sayı, para, saat, kısaltma) ve cümle bölme            |
+| `backend/studio/voice.py`      | Talk işleri: TTS istemcisi, ses klonlama, InfiniteTalk lipsync, VRAM paylaşımı     |
+| `backend/studio/jobs.py`       | Tek GPU iş kuyruğu: aynı modeli kullanan işleri art arda çalıştırır                |
+| `backend/studio/bench.py`      | `python -m studio bench`: sabit küçük render'la hız ölçümü                         |
+| `backend/studio/face.py`       | YuNet yüz bulma, kırpma ve yumuşak maskeyle geri yerleştirme                       |
+| `backend/studio/hd.py`         | Real-ESRGAN: görsel 2x, video 1080p (parça parça)                                  |
+| `backend/studio/subtitles.py`  | Script parçalarından / tanınan kelimelerden altyazı cue'ları                       |
+| `backend/studio/batch.py`      | İçerik paketleri: gönderi + konuşan video + export işlerini birlikte kuyruğa alır  |
+| `backend/studio/scripts_tr.py` | Türkçe UGC script şablonları                                                       |
+| `backend/studio/export.py`     | Klip birleştirme, altyazı çizimi, müzik ducking, -14 LUFS mastering                |
+| `tts/server.py`                | Chatterbox TTS + faster-whisper tanıma sunucusu (ayrı venv, 7870), GPU→RAM offload |
+| `tts/cleanup.py`               | Sessizlik kırpma ve ses düzeyi eşitleme (TTS çıktısı ve ses örnekleri)             |
+| `frontend/src/pages/`          | Builder, Influencers, karakter sayfası, Create, Motion, Talk                       |
 
 ## Geliştirme
 

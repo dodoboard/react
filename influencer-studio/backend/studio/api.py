@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .batch import BatchStudio
 from .catalog import public_catalog
 from .comfy import ComfyBackend, ComfyClient
 from .compat import missing_nodes
@@ -17,12 +18,13 @@ from .flux2 import PROFILES
 from .hd import HDStudio
 from .jobs import JobQueue
 from .models import (
-    BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, ExportRequest,
+    BatchRequest, BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, ExportRequest,
     IdentityPackRequest, MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
     TranscribeRequest, UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
 from .prompting import character_prompt
+from .scripts_tr import public_templates
 from .service import Invalid, NotFound, Studio
 from .settings import Settings
 from .store import Store
@@ -63,6 +65,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         await tts.aclose()
         store.close()
 
+    batches = BatchStudio(store, jobs, studio, voice, exporter)
     app = FastAPI(title="Influencer Studio", lifespan=lifespan)
     app.state.studio = studio
     app.state.voice = voice
@@ -283,6 +286,24 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     @app.post("/api/exports")
     async def create_export(req: ExportRequest) -> dict:
         return job_response(exporter.export(req))
+
+    # ── Content packs ───────────────────────────────────────────────────────
+    @app.get("/api/scripts")
+    def script_templates() -> list[dict]:
+        return public_templates()
+
+    @app.post("/api/characters/{character_id}/batches")
+    async def create_batch(character_id: str, req: BatchRequest) -> dict:
+        return batches.create(character_id, req)
+
+    @app.get("/api/characters/{character_id}/batches")
+    def list_batches(character_id: str) -> list[dict]:
+        return batches.list(character_id)
+
+    @app.get("/api/batches/{batch_id}.zip")
+    def batch_zip(batch_id: str) -> Response:
+        name, data = batches.zip(batch_id)
+        return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/api/voice/schema")
     def voice_schema_route() -> dict:

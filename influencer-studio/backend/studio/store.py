@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at REAL
 );
 CREATE INDEX IF NOT EXISTS jobs_by_time ON jobs(created_at);
+CREATE TABLE IF NOT EXISTS batches (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+    jobs TEXT NOT NULL DEFAULT '[]',  -- JSON: [{"job_id", "role": post | talk | export, "label"}]
+    created_at REAL NOT NULL
+);
 """
 
 _MEDIA_TYPES = {
@@ -238,6 +244,30 @@ class Store:
 
     def recent_jobs(self, limit: int = 30) -> list[dict]:
         return [_job_row(r) for r in self._read("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))]
+
+    # ── batches ─────────────────────────────────────────────────────────────
+    def create_batch(self, character_id: str, jobs: list[dict]) -> str:
+        batch_id = _new_id()
+        self._write(("INSERT INTO batches (id, character_id, jobs, created_at) VALUES (?,?,?,?)",
+                     (batch_id, character_id, json.dumps(jobs, ensure_ascii=False), time.time())))
+        return batch_id
+
+    def add_batch_job(self, batch_id: str, entry: dict) -> None:
+        with self._lock:
+            row = self._db.execute("SELECT jobs FROM batches WHERE id = ?", (batch_id,)).fetchone()
+            if row is not None:
+                jobs = [*json.loads(row["jobs"]), entry]
+                self._db.execute("UPDATE batches SET jobs = ? WHERE id = ?", (json.dumps(jobs, ensure_ascii=False), batch_id))
+                self._db.commit()
+
+    def batch(self, batch_id: str) -> dict | None:
+        rows = self._read("SELECT * FROM batches WHERE id = ?", (batch_id,))
+        return {**dict(rows[0]), "jobs": json.loads(rows[0]["jobs"])} if rows else None
+
+    def batches(self, character_id: str, limit: int = 20) -> list[dict]:
+        rows = self._read("SELECT * FROM batches WHERE character_id = ? ORDER BY created_at DESC LIMIT ?",
+                          (character_id, limit))
+        return [{**dict(r), "jobs": json.loads(r["jobs"])} for r in rows]
 
     # ── characters ──────────────────────────────────────────────────────────
     def create_character(self, name: str, spec: dict, portrait_id: str) -> dict:

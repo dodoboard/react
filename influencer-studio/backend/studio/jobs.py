@@ -75,6 +75,11 @@ class JobQueue:
         self._persist = persist or (lambda job: None)
         self.interrupt = interrupt  # set after construction when the ComfyUI client exists
         self._running: tuple[Job, asyncio.Task] | None = None
+        self._listeners: list[Callable[[Job], Any]] = []
+
+    def on_finish(self, listener: Callable[[Job], Any]) -> None:
+        """Call `listener(job)` whenever a job ends (done, error or cancelled)."""
+        self._listeners.append(listener)
 
     def submit(self, kind: str, fn: JobFn, group: str | None = None) -> Job:
         job = Job(kind=kind, group=group or kind)
@@ -115,6 +120,11 @@ class JobQueue:
     def _finish(self, job: Job, status: Status, error: str | None = None) -> None:
         job.status, job.error, job.progress = status, error, 1.0 if status == "done" else job.progress
         self._save(job)
+        for listener in self._listeners:
+            try:
+                listener(job)
+            except Exception:
+                log.exception("job listener failed for %s", job.id)
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
