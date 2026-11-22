@@ -153,6 +153,12 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     app.state.prompts = []  # graphs received, for test assertions
     app.state.frees = 0
     app.state.vram_free = 2 * 2**30  # a render just finished: models still loaded
+    app.state.interrupts = 0
+    app.state.deleted = []  # prompt ids removed with POST /queue {"delete": [...]}
+    app.state.missing_nodes = set()  # node types /object_info leaves out (an outdated ComfyUI)
+    app.state.slow = 0.0  # extra seconds per sampling step, to test cancelling a running job
+    interrupted: set[str] = set()
+    running: set[str] = set()
     clients: dict[str, WebSocket] = {}
     inputs: dict[str, bytes] = {}
     outputs: dict[str, bytes] = {}
@@ -162,6 +168,21 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     def system_stats() -> dict:
         return {"system": {"comfyui_version": "fake"},
                 "devices": [{"name": "Fake GPU", "vram_total": 16 * 2**30, "vram_free": app.state.vram_free}]}
+
+    @app.post("/interrupt")
+    def interrupt(body: dict | None = None) -> dict:
+        app.state.interrupts += 1
+        interrupted.update(running)
+        return {}
+
+    @app.post("/queue")
+    def queue(body: dict) -> dict:
+        app.state.deleted.extend(body.get("delete", []))
+        return {}
+
+    @app.get("/object_info")
+    def object_info() -> dict:
+        return {name: {"input": {}} for name in sorted(KNOWN_NODES - app.state.missing_nodes)}
 
     @app.post("/free")
     def free(body: dict) -> dict:
@@ -243,7 +264,10 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
         if any(n["class_type"] == "SaveVideo" for n in graph.values()):
             for node_id in [i for i, n in graph.items() if n["class_type"] in _SAMPLERS]:
                 for step in range(1, 5):
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(delay + app.state.slow)
+                    if prompt_id in interrupted:
+                        await send("execution_interrupted", {})
+                        return
                     await send("progress", {"value": step, "max": 4, "node": node_id})
             size = next(n["inputs"] for n in graph.values() if n["class_type"] in _VIDEO_SIZE_NODES)
             create = next(n["inputs"] for n in graph.values() if n["class_type"] == "CreateVideo")
@@ -265,7 +289,10 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
         seed = next(n["inputs"]["noise_seed"] for n in graph.values() if n["class_type"] == "RandomNoise")
         refs = sum(n["class_type"] == "LoadImage" for n in graph.values())
         for step in range(1, steps + 1):
-            await asyncio.sleep(delay)
+            await asyncio.sleep(delay + app.state.slow)
+            if prompt_id in interrupted:
+                await send("execution_interrupted", {})
+                return
             await send("progress", {"value": step, "max": steps, "node": "sampler"})
         images = []
         for i in range(latent["batch_size"]):
@@ -284,7 +311,14 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
         if errors := validate(graph):
             return JSONResponse({"error": {"message": "Prompt outputs failed validation"}, "node_errors": errors}, 400)
         prompt_id = uuid.uuid4().hex
-        asyncio.create_task(execute(prompt_id, body.get("client_id", ""), graph))
+        async def tracked() -> None:
+            running.add(prompt_id)
+            try:
+                await execute(prompt_id, body.get("client_id", ""), graph)
+            finally:
+                running.discard(prompt_id)
+
+        asyncio.create_task(tracked())
         return JSONResponse({"prompt_id": prompt_id, "number": len(app.state.prompts), "node_errors": {}})
 
     @app.get("/history/{prompt_id}")

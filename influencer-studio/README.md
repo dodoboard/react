@@ -39,6 +39,14 @@ Higgsfield AI Influencer Studio'nun lokal karşılığı. ComfyUI üzerinde gör
 
 Linux / WSL için aynı adımlar `start.sh` ile.
 
+Kurulumdan sonra tüm modları tek komutla kontrol et: her mod için model dosyaları, ComfyUI'da gereken node'lar ve küçük bir deneme render'ı (✓/✗ tablosu):
+
+```bat
+.venv\Scripts\python -m studio doctor --all
+```
+
+Üst bardaki **Queue** düğmesi bekleyen, çalışan ve son işleri gösterir. Her iş buradan ya da kendi ilerleme satırından **Cancel** ile durdurulabilir: kuyruktaki iş silinir, çalışan render ComfyUI'da kesilir. İş geçmişi `data/studio.db`'de tutulur; stüdyo yeniden başlatılırsa yarım kalan işler "Studio restarted" olarak işaretlenir. ComfyUI eskiyse (gereken bir node yoksa) arayüz hangi node'un eksik olduğunu gösterir.
+
 ## Model profilleri
 
 | `STUDIO_PROFILE`        | Model                            | Adım / CFG | Lisans                           |

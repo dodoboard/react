@@ -176,6 +176,8 @@ export const api = {
   },
   generateCandidates: (body: BuilderBody) => request<Job>("/api/builder/generate", json("POST", body)),
   job: <T = ImageMeta>(id: string) => request<Job<T>>(`/api/jobs/${id}`),
+  jobs: (limit = 15) => request<Job<unknown>[]>(`/api/jobs?limit=${limit}`),
+  cancelJob: (id: string) => request<Job<unknown>>(`/api/jobs/${id}`, { method: "DELETE" }),
   characters: () => request<Character[]>("/api/characters"),
   character: (id: string) => request<CharacterDetail>(`/api/characters/${id}`),
   createCharacter: (name: string, spec: CharacterSpec, image_id: string) =>

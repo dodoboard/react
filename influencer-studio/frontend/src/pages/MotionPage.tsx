@@ -114,6 +114,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
   );
   const missing = health?.modes[mode] ?? [];
   const missingSmooth = smooth ? (health?.modes.smooth ?? []) : [];
+  const missingNodes = [...(health?.nodes?.[mode] ?? []), ...(smooth ? (health?.nodes?.smooth ?? []) : [])];
 
   const ready =
     !!selected &&
@@ -331,6 +332,7 @@ export function MotionPage({ characterId, navigate }: { characterId?: string; na
               <code>python scripts/download_models.py --comfy &lt;ComfyUI&gt; --video {mode}</code>
             </p>
           )}
+          {missingNodes.length > 0 && <p className="error-note">Update ComfyUI: it lacks {missingNodes.join(", ")}.</p>}
           <ErrorNote message={error} />
           <button type="button" className="btn btn--primary btn--block" disabled={!ready || busy} onClick={generate}>
             {busy ? "Preparing…" : mode === "dance" ? "Generate dance" : mode === "music" ? "Generate music dance" : "Generate motion"}

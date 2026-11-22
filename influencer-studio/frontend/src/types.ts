@@ -63,7 +63,8 @@ export interface ImageMeta {
 export interface Job<T = ImageMeta> {
   id: string;
   kind: string;
-  status: "queued" | "running" | "done" | "error";
+  status: "queued" | "running" | "done" | "error" | "cancelled";
+  created_at?: number;
   progress: number;
   outputs: T[];
   error: string | null;
@@ -93,6 +94,7 @@ export interface Health {
   error?: string;
   profile: { id: string; label: string; license: string; max_refs: number };
   missing_models: { folder: string; file: string }[];
+  missing_nodes?: string[];
   gpu?: string;
   vram_total?: number;
 }
@@ -135,6 +137,7 @@ export interface MotionSchema {
 export interface MotionHealth {
   comfy: boolean;
   modes: Record<"dance" | "music" | "motion" | "smooth", { folder: string; file: string }[]>;
+  nodes?: Partial<Record<string, string[]>>;
 }
 
 export interface VoiceSchema {
@@ -147,6 +150,7 @@ export interface VoiceHealth {
   tts: { ok: boolean; loaded?: boolean; device?: string | null; error?: string | null };
   comfy: boolean;
   missing_models: { folder: string; file: string }[];
+  missing_nodes?: string[];
 }
 
 export interface CueWord {

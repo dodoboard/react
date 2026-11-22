@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useJob } from "../hooks";
 import type { ClipMeta, Job } from "../types";
+import { CancelJobButton } from "./QueuePanel";
 import { ErrorNote, ProgressBar } from "./ui";
 
 const KIND_LABEL: Record<string, string> = {
@@ -67,9 +68,14 @@ export function ClipJobView(props: { jobId: string; aspect: number; onDone?: (jo
     <div className="job">
       {job?.status === "error" ? (
         <ErrorNote message={job.error} />
+      ) : job?.status === "cancelled" ? (
+        <p className="muted small">Cancelled.</p>
       ) : (
         <div className="job__status">
-          <span>{status(job)}</span>
+          <span className="row row--between">
+            {status(job)}
+            <CancelJobButton job={job} />
+          </span>
           <ProgressBar value={job?.progress ?? 0} />
           <div className="tile tile--pending clip-pending" style={{ aspectRatio: String(props.aspect) }} />
         </div>

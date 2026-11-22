@@ -25,6 +25,8 @@ class ComfyBackend(Protocol):
     async def models(self, folder: str) -> list[str]: ...
     async def system_stats(self) -> dict: ...
     async def free(self) -> None: ...
+    async def interrupt(self) -> None: ...
+    async def object_info(self) -> dict: ...
     async def aclose(self) -> None: ...
 
 
@@ -42,6 +44,8 @@ class ComfyClient:
         self.ws_url = "ws" + self.base_url.removeprefix("http") + "/ws"
         self.client_id = uuid.uuid4().hex
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+        self._active: set[str] = set()  # prompt ids this client queued and is waiting for
+        self._object_info: dict | None = None
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -55,6 +59,20 @@ class ComfyClient:
         """Unload ComfyUI's models so another GPU process (the TTS server) has the VRAM."""
         r = await self._http.post("/free", json={"unload_models": True, "free_memory": True})
         r.raise_for_status()
+
+    async def interrupt(self) -> None:
+        """Stop this client's prompts: drop queued ones, interrupt the one running."""
+        if self._active:
+            await self._http.post("/queue", json={"delete": sorted(self._active)})
+        await self._http.post("/interrupt", json={})
+
+    async def object_info(self) -> dict:
+        """Node definitions; cached (several MB, and only changes when ComfyUI is updated)."""
+        if self._object_info is None:
+            r = await self._http.get("/object_info", timeout=60)
+            r.raise_for_status()
+            self._object_info = r.json()
+        return self._object_info
 
     async def models(self, folder: str) -> list[str]:
         r = await self._http.get(f"/models/{folder}")
@@ -86,29 +104,36 @@ class ComfyClient:
             if r.status_code != 200:
                 raise ComfyError(_format_validation_error(r.json()))
             prompt_id = r.json()["prompt_id"]
-            async for raw in ws:
-                if isinstance(raw, bytes):  # latent previews
-                    continue
-                msg = json.loads(raw)
-                data = msg.get("data") or {}
-                if data.get("prompt_id") != prompt_id:
-                    continue
-                kind = msg.get("type")
-                if kind == "progress" and on_progress and data.get("max"):
-                    fraction = data["value"] / data["max"]
-                    if order:
-                        if str(data.get("node")) not in order:
-                            continue
-                        fraction = (order[str(data["node"])] + fraction) / len(order)
-                    on_progress(fraction)
-                elif kind == "execution_error":
-                    raise ComfyError(f"{data.get('node_type')}: {data.get('exception_message', '').strip()}")
-                elif kind == "execution_interrupted":
-                    raise ComfyError("generation interrupted")
-                elif kind == "executing" and data.get("node") is None:
-                    break
-            else:
-                raise ComfyError("ComfyUI connection closed during generation")
+            self._active.add(prompt_id)
+            try:
+                return await self._follow(ws, prompt_id, order, on_progress)
+            finally:
+                self._active.discard(prompt_id)
+
+    async def _follow(self, ws, prompt_id: str, order: dict, on_progress: ProgressFn | None) -> list[bytes]:
+        async for raw in ws:
+            if isinstance(raw, bytes):  # latent previews
+                continue
+            msg = json.loads(raw)
+            data = msg.get("data") or {}
+            if data.get("prompt_id") != prompt_id:
+                continue
+            kind = msg.get("type")
+            if kind == "progress" and on_progress and data.get("max"):
+                fraction = data["value"] / data["max"]
+                if order:
+                    if str(data.get("node")) not in order:
+                        continue
+                    fraction = (order[str(data["node"])] + fraction) / len(order)
+                on_progress(fraction)
+            elif kind == "execution_error":
+                raise ComfyError(f"{data.get('node_type')}: {data.get('exception_message', '').strip()}")
+            elif kind == "execution_interrupted":
+                raise ComfyError("generation interrupted")
+            elif kind == "executing" and data.get("node") is None:
+                break
+        else:
+            raise ComfyError("ComfyUI connection closed during generation")
         return await self._collect(prompt_id)
 
     async def _collect(self, prompt_id: str) -> list[bytes]:

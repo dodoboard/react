@@ -1,7 +1,8 @@
 """`python -m studio` serves the app.
 
     python -m studio doctor                 # tiny end-to-end FLUX.2 render
-    python -m studio bench image|motion|talk [runs]   # time a small fixed render
+    python -m studio doctor --all           # every mode: models, ComfyUI nodes, a small render
+    python -m studio bench image|motion|talk|hd [runs]   # time a small fixed render
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import time
 import uvicorn
 
 from .api import create_app
-from .bench import bench
+from .bench import bench, doctor_all
 from .comfy import ComfyClient
 from .flux2 import PROFILES, build_graph
 from .settings import Settings
@@ -53,6 +54,8 @@ def main() -> None:
     args = sys.argv[1:]
     if args == ["doctor"]:
         raise SystemExit(asyncio.run(doctor(settings)))
+    if args == ["doctor", "--all"]:
+        raise SystemExit(asyncio.run(doctor_all(settings)))
     if args[:1] == ["bench"]:
         runs = int(args[2]) if len(args) > 2 and args[2].isdigit() else 2
         raise SystemExit(asyncio.run(bench(settings, args[1] if len(args) > 1 else "", runs)))

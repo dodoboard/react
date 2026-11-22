@@ -5,6 +5,7 @@ import { BuilderPage } from "./pages/BuilderPage";
 import { CharacterPage } from "./pages/CharacterPage";
 import { CharactersPage } from "./pages/CharactersPage";
 import { CreatePage } from "./pages/CreatePage";
+import { QueuePanel } from "./components/QueuePanel";
 import { ExportPage } from "./pages/ExportPage";
 import { MotionPage } from "./pages/MotionPage";
 import { TalkPage } from "./pages/TalkPage";
@@ -36,7 +37,7 @@ function HealthPill({ health }: { health: Health | null }) {
 }
 
 function SetupBanner({ health }: { health: Health | null }) {
-  if (!health || (health.comfy && !health.missing_models.length)) return null;
+  if (!health || (health.comfy && !health.missing_models.length && !health.missing_nodes?.length)) return null;
   return (
     <div className="banner" role="status">
       {!health.comfy ? (
@@ -51,7 +52,14 @@ function SetupBanner({ health }: { health: Health | null }) {
               models/{m.folder}/{m.file}
             </code>
           ))}{" "}
-          Run <code>python scripts/download_models.py --comfy &lt;ComfyUI dir&gt;</code>.
+          {health.missing_models.length > 0 && (
+            <>
+              Run <code>python scripts/download_models.py --comfy &lt;ComfyUI dir&gt;</code>.
+            </>
+          )}
+          {health.missing_nodes?.length ? (
+            <> Update ComfyUI: it lacks {health.missing_nodes.map((n) => <code key={n}>{n}</code>)}.</>
+          ) : null}
         </>
       )}
     </div>
@@ -109,6 +117,7 @@ export function App() {
             </a>
           ))}
         </nav>
+        <QueuePanel />
         <HealthPill health={health} />
       </header>
       <SetupBanner health={health} />

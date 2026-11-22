@@ -20,3 +20,17 @@ def test_bench_reports_missing_models(fake_comfy, tmp_path, capsys):
     fake_comfy.app.state.models = {}
     assert asyncio.run(bench(Settings(comfy_url=fake_comfy.url, data_dir=tmp_path), "talk")) == 1
     assert "wav2vec2" in capsys.readouterr().out
+
+
+def test_doctor_all_reports_every_mode(fake_comfy, tmp_path, capsys):
+    from studio.bench import doctor_all
+
+    settings = Settings(comfy_url=fake_comfy.url, data_dir=tmp_path)
+    assert asyncio.run(doctor_all(settings)) == 0
+    out = capsys.readouterr().out
+    assert out.count("[✓]") == 7 and "includes model load" in out
+    fake_comfy.app.state.missing_nodes = {"WanInfiniteTalkToVideo"}
+    fake_comfy.app.state.models = {k: v for k, v in fake_comfy.app.state.models.items() if k != "upscale_models"}
+    assert asyncio.run(doctor_all(settings)) == 0  # missing pieces are listed, renders still pass
+    out = capsys.readouterr().out
+    assert "node WanInfiniteTalkToVideo (update ComfyUI)" in out and "RealESRGAN_x4plus.pth" in out

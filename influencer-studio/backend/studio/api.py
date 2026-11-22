@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .catalog import public_catalog
 from .comfy import ComfyBackend, ComfyClient
+from .compat import missing_nodes
 from .export import ExportStudio
 from .face import YuNet
 from .flux2 import PROFILES
@@ -40,7 +41,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         raise SystemExit(f"Unknown STUDIO_PROFILE '{settings.profile}'. Options: {', '.join(PROFILES)}")
     comfy = comfy or ComfyClient(settings.comfy_url)
     store = Store(settings.data_dir)
-    jobs = JobQueue()
+    jobs = JobQueue(persist=store.save_job, interrupt=comfy.interrupt)
     studio = Studio(PROFILES[settings.profile], comfy, store, jobs, YuNet(settings.data_dir / "models"))
     if settings.pose_cache not in ("off", "int4", "int8", "default"):
         raise SystemExit("STUDIO_POSE_CACHE must be off, int4, int8 or default")
@@ -82,9 +83,13 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     def schema() -> dict:
         return public_catalog() | {"max_refs": studio.profile.max_refs}
 
+    async def nodes() -> dict[str, list[str]]:
+        return await missing_nodes(comfy, studio.profile)
+
     @app.get("/api/health")
     async def health() -> dict:
-        return await studio.health()
+        result = await studio.health()
+        return result | {"missing_nodes": (await nodes()).get("image", []) if result["comfy"] else []}
 
     @app.get("/api/loras")
     async def loras() -> list[str]:
@@ -105,9 +110,24 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     async def builder_generate(req: BuilderRequest) -> dict:
         return job_response(studio.generate_candidates(req))
 
+    @app.get("/api/jobs")
+    def list_jobs(limit: int = Query(20, ge=1, le=100)) -> list[dict]:
+        """Unfinished jobs first (live), then recent history from the database."""
+        live = [job_response(j) for j in sorted(jobs.active(), key=lambda j: j.created_at)]
+        seen = {j["id"] for j in live}
+        return live + [j for j in store.recent_jobs(limit) if j["id"] not in seen][: max(0, limit - len(live))]
+
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> dict:
-        if not (job := jobs.get(job_id)):
+        if job := jobs.get(job_id):
+            return job_response(job)
+        if saved := store.job(job_id):  # finished before a restart, or pruned from memory
+            return saved
+        raise HTTPException(404, "job not found")
+
+    @app.delete("/api/jobs/{job_id}")
+    async def cancel_job(job_id: str) -> dict:
+        if not (job := await jobs.cancel(job_id)):
             raise HTTPException(404, "job not found")
         return job_response(job)
 
@@ -165,7 +185,8 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
 
     @app.get("/api/motion/health")
     async def motion_health() -> dict:
-        return await motion.health()
+        result = await motion.health()
+        return result | {"nodes": await nodes() if result["comfy"] else {}}
 
     @app.post("/api/motion/uploads", status_code=201)
     async def motion_upload(kind: str = Query(...), file: UploadFile = File(...)) -> dict:
@@ -269,7 +290,8 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
 
     @app.get("/api/voice/health")
     async def voice_health() -> dict:
-        return await voice.health()
+        result = await voice.health()
+        return result | {"missing_nodes": (await nodes()).get("talk", []) if result["comfy"] else []}
 
     @app.post("/api/voice/speak")
     async def voice_speak(req: SpeakRequest) -> dict:

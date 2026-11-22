@@ -3,6 +3,10 @@
 Jobs carry a model group ("flux2", "wan-animate", "talk"…). The next job is taken from the group
 that just ran when one is waiting, so ComfyUI keeps its models loaded instead of swapping 10–20 GB
 of weights between every job. A job passed over MAX_SKIPS times runs next regardless.
+
+Status changes are handed to `persist` (the SQLite store), so finished jobs survive a restart and
+the UI can list recent work. A running job can be cancelled: its task is cancelled and `interrupt`
+stops whatever ComfyUI is rendering for it.
 """
 
 from __future__ import annotations
@@ -12,11 +16,12 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 log = logging.getLogger(__name__)
 
-Status = Literal["queued", "running", "done", "error"]
+Status = Literal["queued", "running", "done", "error", "cancelled"]
+FINISHED = ("done", "error", "cancelled")
 MAX_SKIPS = 2
 
 
@@ -36,6 +41,7 @@ class Job:
         return {
             "id": self.id,
             "kind": self.kind,
+            "created_at": self.created_at,
             "status": self.status,
             "progress": round(self.progress, 3),
             "outputs": self.outputs,
@@ -59,20 +65,56 @@ def _pick(pending: list[tuple[str, int]], last_group: str | None) -> int:
 
 
 class JobQueue:
-    def __init__(self, max_history: int = 200):
+    def __init__(self, max_history: int = 200, persist: Callable[[Job], Any] | None = None,
+                 interrupt: Callable[[], Awaitable[Any]] | None = None):
         self._jobs: dict[str, Job] = {}
         self._pending: list[tuple[Job, JobFn]] = []
         self._wake = asyncio.Event()
         self._last_group: str | None = None
         self._max_history = max_history
+        self._persist = persist or (lambda job: None)
+        self.interrupt = interrupt  # set after construction when the ComfyUI client exists
+        self._running: tuple[Job, asyncio.Task] | None = None
 
     def submit(self, kind: str, fn: JobFn, group: str | None = None) -> Job:
         job = Job(kind=kind, group=group or kind)
         self._jobs[job.id] = job
         self._pending.append((job, fn))
+        self._save(job)
         self._wake.set()
         self._prune()
         return job
+
+    def _save(self, job: Job) -> None:
+        try:
+            self._persist(job)
+        except Exception:  # history is a convenience: never fail a job over it
+            log.exception("could not store job %s", job.id)
+
+    def active(self) -> list[Job]:
+        return [j for j in self._jobs.values() if j.status not in FINISHED]
+
+    async def cancel(self, job_id: str) -> Job | None:
+        job = self._jobs.get(job_id)
+        if job is None or job.status in FINISHED:
+            return job
+        for i, (queued, _) in enumerate(self._pending):
+            if queued is job:
+                del self._pending[i]
+                self._finish(job, "cancelled", "cancelled")
+                return job
+        if self._running and self._running[0] is job:
+            self._running[1].cancel()
+            if self.interrupt:
+                try:
+                    await self.interrupt()
+                except Exception:
+                    log.exception("could not interrupt ComfyUI")
+        return job
+
+    def _finish(self, job: Job, status: Status, error: str | None = None) -> None:
+        job.status, job.error, job.progress = status, error, 1.0 if status == "done" else job.progress
+        self._save(job)
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -108,16 +150,23 @@ class JobQueue:
                 await self._wake.wait()
             job, fn = self.next()
             job.status = "running"
+            self._save(job)
+            task = asyncio.create_task(fn(job))
+            self._running = (job, task)
             try:
-                job.outputs = await fn(job)
-                job.status = "done"
+                job.outputs = await task
+                self._finish(job, "done")
+            except asyncio.CancelledError:
+                if not task.cancelled():  # the worker itself is shutting down
+                    raise
+                self._finish(job, "cancelled", "cancelled")
             except Exception as e:  # surfaced to the UI
                 log.exception("job %s failed", job.id)
-                job.status, job.error = "error", str(e) or type(e).__name__
+                self._finish(job, "error", str(e) or type(e).__name__)
             finally:
-                job.progress = 1.0
+                self._running = None
 
     def _prune(self) -> None:
-        finished = [j for j in self._jobs.values() if j.status in ("done", "error")]
+        finished = [j for j in self._jobs.values() if j.status in FINISHED]
         for j in finished[: max(0, len(self._jobs) - self._max_history)]:
             del self._jobs[j.id]

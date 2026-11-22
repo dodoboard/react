@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useJob } from "../hooks";
 import type { ImageMeta, Job } from "../types";
 import { ImageTile } from "./ImageTile";
+import { CancelJobButton } from "./QueuePanel";
 import { ErrorNote, ProgressBar } from "./ui";
 
 const RUNNING: Record<string, string> = { face_fix: "Redrawing the face", upscale_image: "Upscaling" };
@@ -26,22 +27,27 @@ export function JobView(props: {
 }) {
   const job = useJob(props.jobId, props.onDone);
   const finished = job?.status === "done";
+  const failed = job?.status === "error" || job?.status === "cancelled";
 
   return (
     <div className="job">
-      {!finished && job?.status !== "error" && (
+      {!finished && !failed && (
         <div className="job__status">
-          <span>{status(job)}</span>
+          <span className="row row--between">
+            {status(job)}
+            <CancelJobButton job={job} />
+          </span>
           <ProgressBar value={job?.progress ?? 0} />
         </div>
       )}
       {job?.status === "error" && <ErrorNote message={job.error} />}
+      {job?.status === "cancelled" && <p className="muted small">Cancelled.</p>}
       <div className={`grid${props.compact ? " grid--compact" : ""}`}>
         {finished
           ? job.outputs.map((img) => (
               <ImageTile key={img.id} image={img} onOpen={() => props.onOpen(img)} actions={props.actions?.(img)} />
             ))
-          : job?.status !== "error" &&
+          : !failed &&
             Array.from({ length: props.placeholders }, (_, i) => (
               <div key={i} className="tile tile--pending" style={{ aspectRatio: String(props.aspect) }} />
             ))}

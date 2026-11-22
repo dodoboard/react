@@ -1075,3 +1075,57 @@ select.select--sm {
     padding: 7px 5px;
   }
 }
+
+/* ── job queue ───────────────────────────────────────────────────────── */
+.queue {
+  position: relative;
+  margin-left: auto;
+}
+.queue__button {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.queue__button--busy {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.queue__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(360px, calc(100vw - 24px));
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  z-index: 30;
+}
+.queue__panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.queue__job {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--raised);
+  font-size: 13px;
+}
+.queue__job--cancelled,
+.queue__job--done {
+  opacity: 0.75;
+}

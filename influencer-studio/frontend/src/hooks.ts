@@ -31,7 +31,7 @@ export function useJob<T = ImageMeta>(jobId: string | null, onDone?: (job: Job<T
         const next = await api.job<T>(jobId);
         if (cancelled) return;
         setJob(next);
-        if (next.status === "done" || next.status === "error") {
+        if (next.status === "done" || next.status === "error" || next.status === "cancelled") {
           onDoneRef.current?.(next);
           return;
         }

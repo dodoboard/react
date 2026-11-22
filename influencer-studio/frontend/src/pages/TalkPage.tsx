@@ -313,6 +313,9 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
 
         <footer className="panel__footer">
           {speechSource === "script" && <TtsWarning health={health} />}
+          {health?.missing_nodes?.length ? (
+            <p className="error-note">Update ComfyUI: it lacks {health.missing_nodes.join(", ")}.</p>
+          ) : null}
           {health && health.missing_models.length > 0 && (
             <p className="error-note">
               Missing models: {health.missing_models.map((m) => m.file).join(", ")}. Run{" "}

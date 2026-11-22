@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS clips (
     meta TEXT NOT NULL DEFAULT '{}'  -- JSON: speech segments, subtitles, HD source…
 );
 CREATE INDEX IF NOT EXISTS clips_by_character ON clips(character_id, created_at);
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,       -- queued | running | done | error | cancelled
+    progress REAL NOT NULL DEFAULT 0,
+    error TEXT,
+    outputs TEXT NOT NULL DEFAULT '[]',  -- JSON: the saved images / clips
+    created_at REAL NOT NULL,
+    finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS jobs_by_time ON jobs(created_at);
 """
 
 _MEDIA_TYPES = {
@@ -86,6 +97,9 @@ class Store:
             self._db.execute("ALTER TABLE characters ADD COLUMN voice_id TEXT")
         if "meta" not in {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}:
             self._db.execute("ALTER TABLE clips ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'")
+        # Jobs cut short by a restart cannot be resumed: ComfyUI's state is unknown.
+        self._db.execute("UPDATE jobs SET status = 'error', error = 'Studio restarted', finished_at = ? "
+                         "WHERE status IN ('queued', 'running')", (time.time(),))
         self._db.commit()
 
     def close(self) -> None:
@@ -206,6 +220,25 @@ class Store:
                         ("UPDATE characters SET voice_id = NULL WHERE voice_id = ?", (clip_id,)))
             self.clip_path(clip).unlink(missing_ok=True)
 
+    # ── jobs ────────────────────────────────────────────────────────────────
+    def save_job(self, job) -> None:
+        finished = time.time() if job.status in ("done", "error", "cancelled") else None
+        self._write((
+            "INSERT INTO jobs (id, kind, status, progress, error, outputs, created_at, finished_at) "
+            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, "
+            "progress = excluded.progress, error = excluded.error, outputs = excluded.outputs, "
+            "finished_at = excluded.finished_at",
+            (job.id, job.kind, job.status, job.progress, job.error, json.dumps(job.outputs, ensure_ascii=False),
+             job.created_at, finished),
+        ))
+
+    def job(self, job_id: str) -> dict | None:
+        rows = self._read("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        return _job_row(rows[0]) if rows else None
+
+    def recent_jobs(self, limit: int = 30) -> list[dict]:
+        return [_job_row(r) for r in self._read("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))]
+
     # ── characters ──────────────────────────────────────────────────────────
     def create_character(self, name: str, spec: dict, portrait_id: str) -> dict:
         character_id = _new_id()
@@ -267,6 +300,13 @@ class Store:
 def _image_row(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["url"] = f"/api/images/{d['id']}"
+    return d
+
+
+def _job_row(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["outputs"] = json.loads(d["outputs"] or "[]")
+    d["queue_position"] = None
     return d
 
 
