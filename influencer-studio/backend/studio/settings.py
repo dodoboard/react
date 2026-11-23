@@ -26,3 +26,8 @@ class Settings:
     # "free" always unloads them, "never" leaves them (TTS on CPU, or a GPU with room for both).
     tts_vram: str = field(default_factory=lambda: _env("TTS_VRAM", "auto"))
     tts_vram_gb: float = field(default_factory=lambda: float(_env("TTS_VRAM_GB", "4")))
+    # LoRA training: an ai-toolkit checkout with its own venv (scripts/install_aitk), and the
+    # ComfyUI folder whose models/loras/ receives the trained file.
+    aitk_dir: Path = field(default_factory=lambda: Path(_env("AITK_DIR", str(PROJECT_ROOT / "ai-toolkit"))))
+    aitk_python: str = field(default_factory=lambda: _env("AITK_PYTHON", ""))
+    comfy_dir: str = field(default_factory=lambda: _env("COMFY_DIR", ""))

@@ -65,7 +65,7 @@ Diğer ayarlar: `STUDIO_COMFY_URL` (varsayılan `http://127.0.0.1:8188`), `STUDI
 2. **Karakter sayfası**: **Identity pack** ile farklı açılar üret, en iyilerini ★ ile referans yap (en fazla 4).
 3. **Create**: preset seç veya sahneyi yaz. Her üretimde referanslar FLUX.2'ye `ReferenceLatent` olarak verilir.
 4. **Yüz ve çözünürlük**: Create'te **Face detail** açıkken (varsayılan) tam boy karelerde küçük kalan yüz bulunur, 1024 px'te referanslarla yeniden çizilir ve kareye yumuşak geçişle geri yerleştirilir. Görsellerdeki **Fix face** aynı işi tek görsele, **Upscale ×2** ise çözünürlüğü iki katına çıkarır. Bkz. [HD ve yüz iyileştirme](#hd-ve-yüz-iyileştirme).
-5. **Daha güçlü tutarlılık**: **Export LoRA dataset** → zip'teki `train_flux2_klein_4b.yaml` ile [ai-toolkit](https://github.com/ostris/ai-toolkit)'te eğit → `.safetensors` dosyasını `ComfyUI/models/loras/` içine koy → karakter sayfasında seç.
+5. **Daha güçlü tutarlılık**: karakter sayfasında **Train LoRA** (bkz. [LoRA eğitimi](#lora-eğitimi)) ya da elle: **Export LoRA dataset** → zip'teki `train_flux2_klein_4b.yaml` ile [ai-toolkit](https://github.com/ostris/ai-toolkit)'te eğit → `.safetensors` dosyasını `ComfyUI/models/loras/` içine koy → karakter sayfasında seç.
 
 ## Motion
 
@@ -151,6 +151,23 @@ Bir haftalık içeriği tek seferde kuyruğa ekler: sahne preset'lerinden gönde
 - İstenirse her konuşan video bitince otomatik olarak altyazılı 9:16 export'u da üretilir.
 - Bir iş hata verirse diğerleri devam eder; her iş kuyruk panelinden iptal edilebilir.
 - **Download all (.zip)** paketteki tüm görselleri ve videoları indirir.
+
+## LoRA eğitimi
+
+Referans görseller yüzü tutarlı tutar; en güçlü kimlik için karaktere özel bir FLUX.2 [klein] 4B LoRA'sı eğitilebilir. Karakter sayfasındaki **Train LoRA** bunu uygulama içinden yapar:
+
+```bat
+scripts\install_aitk.bat
+set STUDIO_COMFY_DIR=C:\ComfyUI_windows_portable\ComfyUI
+start.bat
+```
+
+- Gereken: en az 10 referans/içerik görseli (Identity pack + birkaç Create üretimi).
+- Görseller açıklamalarıyla birlikte dataset'e yazılır ve ai-toolkit kendi Python ortamında eğitim yapar (2500 adım, 16 GB'a sığan ayarlar; RTX 5080 Laptop'ta yaklaşık 1–2 saat). İlerleme kuyruk panelinde görünür, eğitim iptal edilebilir.
+- Eğitimden önce ComfyUI'ın modelleri boşaltılır; eğitim GPU'nun tamamını kullanır.
+- Bitince `.safetensors` dosyası `ComfyUI/models/loras/` içine kopyalanır ve karaktere 0,9 güçle atanır.
+- Farklı bir ai-toolkit kurulumu için `STUDIO_AITK_DIR` / `STUDIO_AITK_PYTHON`.
+- LoRA yalnızca görsel üretiminde kullanılır; videolar başlangıç karesinden yüzü alır.
 
 ## HD ve yüz iyileştirme
 

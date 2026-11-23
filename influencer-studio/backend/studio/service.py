@@ -237,10 +237,17 @@ class Studio:
         return self.jobs.submit("face_fix", run, group="flux2")
 
     # ── LoRA dataset export ─────────────────────────────────────────────────
+    def dataset_images(self, character_id: str) -> list[dict]:
+        return [i for i in self.store.images(character_id) if i["kind"] in ("reference", "content")]
+
+    @staticmethod
+    def trigger(character: dict) -> str:
+        return "zz_" + (re.sub(r"[^a-z0-9]+", "_", character["name"].lower()).strip("_") or character["id"])
+
     def export_dataset(self, character_id: str) -> tuple[str, bytes]:
         character = self._character(character_id)
-        trigger = "zz_" + (re.sub(r"[^a-z0-9]+", "_", character["name"].lower()).strip("_") or character_id)
-        images = [i for i in self.store.images(character_id) if i["kind"] in ("reference", "content")]
+        trigger = self.trigger(character)
+        images = self.dataset_images(character_id)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for n, img in enumerate(reversed(images), start=1):
@@ -276,27 +283,28 @@ class Studio:
             return []
 
 
-def aitk_config(trigger: str) -> str:
+def aitk_config(trigger: str, dataset: str = "./dataset  # use an absolute path to the extracted dataset folder",
+                output: str = "output", steps: int = 2500) -> str:
     """ai-toolkit job for a FLUX.2 [klein] 4B character LoRA (fits 16 GB with low_vram + qfloat8)."""
     return f"""job: extension
 config:
   name: {trigger}
   process:
     - type: sd_trainer
-      training_folder: output
+      training_folder: {output}
       device: cuda:0
       trigger_word: {trigger}
       network: {{ type: lora, linear: 32, linear_alpha: 32 }}
       save: {{ dtype: float16, save_every: 250, max_step_saves_to_keep: 8 }}
       datasets:
-        - folder_path: ./dataset  # use an absolute path to the extracted dataset folder
+        - folder_path: {dataset}
           caption_ext: txt
           caption_dropout_rate: 0.05
           cache_latents_to_disk: true
           resolution: [512, 768, 1024]
       train:
         batch_size: 1
-        steps: 2500
+        steps: {steps}
         gradient_accumulation: 1
         train_unet: true
         train_text_encoder: false

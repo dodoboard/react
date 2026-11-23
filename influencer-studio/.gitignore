@@ -7,3 +7,4 @@ __pycache__/
 .pytest_cache/
 # pin exact UI dependency versions (the repo root ignores npm lockfiles)
 !frontend/package-lock.json
+ai-toolkit/

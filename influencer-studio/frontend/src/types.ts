@@ -197,3 +197,12 @@ export interface Batch {
   finished: boolean;
   progress: number;
 }
+
+export interface LoraStatus {
+  ready: boolean;
+  problems: string[];
+  images: number;
+  min_images: number;
+  trigger: string;
+  lora: string;
+}

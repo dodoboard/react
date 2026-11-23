@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type CharacterPatch } from "../api";
 import { ImageEnhanceActions, type StartedJob } from "../components/Enhance";
 import { ImageTile } from "../components/ImageTile";
+import { LoraTraining } from "../components/LoraTraining";
 import { JobView } from "../components/JobView";
 import { Lightbox } from "../components/Lightbox";
 import { Chip, Empty, ErrorNote, Segmented } from "../components/ui";
@@ -162,6 +163,13 @@ export function CharacterPage({ id, navigate }: { id: string; navigate: (path: s
               <span>Character LoRA</span>
               <span className="muted small">optional</span>
             </div>
+            <LoraTraining
+              characterId={character.id}
+              onTrained={() => {
+                reload();
+                api.loras().then(setLoras, () => {});
+              }}
+            />
             <select value={character.lora} onChange={(e) => patch({ lora: e.target.value })} aria-label="LoRA file">
               <option value="">None (references only)</option>
               {[...new Set([character.lora, ...loras])].filter(Boolean).map((l) => (

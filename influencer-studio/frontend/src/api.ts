@@ -10,6 +10,7 @@ import type {
   Health,
   ImageMeta,
   Job,
+  LoraStatus,
   MediaKind,
   MotionHealth,
   MotionSchema,
@@ -222,6 +223,8 @@ export const api = {
     request<CuesResponse>(`/api/clips/${clipId}/cues`, json("PATCH", { cues })),
   transcribe: (clipId: string, language: string | null) =>
     request<Job<ClipMeta>>(`/api/clips/${clipId}/transcribe`, json("POST", { language })),
+  loraStatus: (characterId: string) => request<LoraStatus>(`/api/characters/${characterId}/lora`),
+  trainLora: (characterId: string) => request<Job<unknown>>(`/api/characters/${characterId}/lora`, { method: "POST" }),
   scripts: () => request<ScriptTemplate[]>("/api/scripts"),
   createBatch: (characterId: string, body: BatchBody) =>
     request<Batch>(`/api/characters/${characterId}/batches`, json("POST", body)),

@@ -17,6 +17,7 @@ from .face import YuNet
 from .flux2 import PROFILES
 from .hd import HDStudio
 from .jobs import JobQueue
+from .lora import DEFAULT_STEPS, LoraTrainer
 from .models import (
     BatchRequest, BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, ExportRequest,
     IdentityPackRequest, MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
         store.close()
 
     batches = BatchStudio(store, jobs, studio, voice, exporter)
+    lora = LoraTrainer(settings, store, jobs, comfy, studio)
     app = FastAPI(title="Influencer Studio", lifespan=lifespan)
     app.state.studio = studio
     app.state.voice = voice
@@ -286,6 +288,15 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     @app.post("/api/exports")
     async def create_export(req: ExportRequest) -> dict:
         return job_response(exporter.export(req))
+
+    # ── LoRA training ───────────────────────────────────────────────────────
+    @app.get("/api/characters/{character_id}/lora")
+    def lora_status(character_id: str) -> dict:
+        return lora.status(character_id)
+
+    @app.post("/api/characters/{character_id}/lora")
+    async def lora_train(character_id: str, steps: int = Query(DEFAULT_STEPS, ge=100, le=6000)) -> dict:
+        return job_response(lora.train(character_id, steps))
 
     # ── Content packs ───────────────────────────────────────────────────────
     @app.get("/api/scripts")
