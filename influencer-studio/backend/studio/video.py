@@ -374,6 +374,13 @@ class TalkParams:
     prompt: str
     seed: int
     smooth: bool = False
+    # Dialogue (InfiniteTalk "two_speakers"): `audio` is speaker 1's track, `audio_2` speaker 2's
+    # (each silent while the other talks), masks are white-on-black images of each speaker's
+    # region, and `mix` is the full conversation for the output video.
+    audio_2: str | None = None
+    mask_1: str | None = None
+    mask_2: str | None = None
+    mix: str | None = None
 
 
 def build_talk_graph(p: TalkParams) -> Graph:
@@ -385,8 +392,18 @@ def build_talk_graph(p: TalkParams) -> Graph:
     positive = g.add("CLIPTextEncode", text=p.prompt, clip=clip)
     negative = g.add("ConditioningZeroOut", conditioning=positive)
     audio = g.add("LoadAudio", audio=p.audio)
-    speech = g.add("AudioEncoderEncode", audio_encoder=g.add("AudioEncoderLoader", audio_encoder_name=WAV2VEC2.name),
-                   audio=audio)
+    encoder = g.add("AudioEncoderLoader", audio_encoder_name=WAV2VEC2.name)
+    speech = g.add("AudioEncoderEncode", audio_encoder=encoder, audio=audio)
+    mode: dict = {"mode": "single_speaker"}
+    if p.audio_2:
+        # DynamicCombo sub-inputs are addressed as "<combo>.<input>" in ComfyUI's API format
+        mode = {
+            "mode": "two_speakers",
+            "mode.audio_encoder_output_2": g.add("AudioEncoderEncode", audio_encoder=encoder,
+                                                 audio=g.add("LoadAudio", audio=p.audio_2)),
+            "mode.mask_1": g.add("ImageToMask", image=g.add("LoadImage", image=p.mask_1), channel="red"),
+            "mode.mask_2": g.add("ImageToMask", image=g.add("LoadImage", image=p.mask_2), channel="red"),
+        }
     start = _image(g, p.image, p.width, p.height)
     sampler = g.add("KSamplerSelect", sampler_name="euler")
 
@@ -395,7 +412,7 @@ def build_talk_graph(p: TalkParams) -> Graph:
     for _ in range(windows):
         # Each window reads the speech from (frames so far - motion frames) and continues the motion.
         talk = g.add(
-            "WanInfiniteTalkToVideo", mode="single_speaker", model=model, model_patch=patch,
+            "WanInfiniteTalkToVideo", **mode, model=model, model_patch=patch,
             positive=positive, negative=negative, vae=vae, width=p.width, height=p.height, length=length,
             start_image=start, audio_encoder_output_1=speech, motion_frame_count=TALK_MOTION_FRAMES,
             audio_scale=1.0, **({"previous_frames": video} if video else {}),
@@ -414,5 +431,5 @@ def build_talk_graph(p: TalkParams) -> Graph:
         video = fresh if video is None else g.add("ImageBatch", image1=video, image2=fresh)
 
     video = g.add("ImageFromBatch", image=video, batch_index=0, length=p.frames)
-    _finish(g, video, TALK_FPS, audio, p.smooth)
+    _finish(g, video, TALK_FPS, g.add("LoadAudio", audio=p.mix) if p.mix else audio, p.smooth)
     return g

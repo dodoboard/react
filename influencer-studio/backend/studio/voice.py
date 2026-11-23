@@ -15,6 +15,7 @@ import asyncio
 import io
 import math
 import random
+import re
 import shutil
 import wave
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ import httpx
 from .comfy import ComfyBackend
 from .jobs import Job, JobQueue
 from .media import extract_audio, probe
-from .models import CharacterSpec, SpeakRequest, TalkRequest
+from .models import CharacterSpec, DialogRequest, SpeakRequest, TalkRequest
 from .motion import MotionStudio
 from .prompting import talk_prompt
 from .service import Invalid, NotFound
@@ -90,6 +91,41 @@ class TTSClient:
         return r.content
 
 
+def silence_like(wav: bytes) -> bytes:
+    """A WAV of the same format and length as `wav`, all zeros."""
+    with wave.open(io.BytesIO(wav)) as src:
+        params, frames = src.getparams(), src.getnframes()
+    out = io.BytesIO()
+    with wave.open(out, "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(bytes(frames * params.nchannels * params.sampwidth))
+    return out.getvalue()
+
+
+_TURN = re.compile(r"^\s*([^:]{1,40}):\s*(.*)$")
+
+
+def parse_dialog(script: str, names: dict[str, str]) -> list[tuple[str, str]]:
+    """[(speaker "a" | "b", line)]. A line starts with "A:", "B:" or a speaker's name; others continue the turn."""
+    aliases = {"a": "a", "1": "a", "b": "b", "2": "b"} | {n.strip().lower(): k for k, n in names.items()}
+    turns: list[tuple[str, str]] = []
+    for raw in script.splitlines():
+        if not raw.strip():
+            continue
+        m = _TURN.match(raw)
+        speaker = aliases.get(m.group(1).strip().lower()) if m else None
+        if speaker:
+            turns.append((speaker, m.group(2).strip()))
+        elif turns:
+            turns[-1] = (turns[-1][0], f"{turns[-1][1]} {raw.strip()}")
+        else:
+            raise Invalid("start the first line with A: or B:")
+    turns = [(s, t) for s, t in turns if t]
+    if not turns:
+        raise Invalid("write the dialogue: one line per turn, starting with A: or B:")
+    return turns
+
+
 def join_wavs(parts: list[bytes], pauses: list[float]) -> tuple[bytes, list[tuple[float, float]]]:
     """Concatenate 16-bit WAVs of one format, `pauses[i]` seconds of silence after part i.
 
@@ -137,6 +173,8 @@ class Speech:
 
 
 class VoiceStudio:
+    detector = None  # face detector (studio.face.YuNet); set by the app, used to place dialogue speakers
+
     def __init__(self, comfy: ComfyBackend, tts: TTSClient, store: Store, jobs: JobQueue, motion: MotionStudio,
                  vram_policy: str = "auto", vram_gb: float = 4.0):
         if vram_policy not in VRAM_POLICIES:
@@ -290,6 +328,103 @@ class VoiceStudio:
                 shutil.rmtree(work, ignore_errors=True)
 
         return self.jobs.submit("talk", run)
+
+
+DIALOG_PAUSE = 0.3  # seconds between turns
+
+
+def _split_x(detector, image_path: Path, width: int) -> int:
+    """Where speaker 1's region ends: between the two largest faces, or the middle of the frame."""
+    from PIL import Image
+
+    try:
+        with Image.open(image_path) as img:
+            faces = sorted(detector(img.convert("RGB")), key=lambda f: f.area, reverse=True)[:2] if detector else []
+            scale = width / img.width
+    except Exception:
+        faces = []
+    if len(faces) < 2:
+        return width // 2
+    centers = sorted(f.x + f.w / 2 for f in faces)
+    return round((centers[0] + centers[1]) / 2 * scale)
+
+
+def _mask_png(width: int, height: int, x0: int, x1: int) -> bytes:
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (width, height))
+    ImageDraw.Draw(img).rectangle([x0, 0, x1 - 1, height], fill=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def dialog_job(voice: VoiceStudio, character_id: str, req: DialogRequest) -> Job:
+    """Two influencers in one shot: each line in its speaker's voice, lip-synced with InfiniteTalk two_speakers."""
+    a = voice.motion.character(character_id)
+    b = voice.store.character(req.partner_id)
+    if not b or b["id"] == a["id"]:
+        raise NotFound(f"partner {req.partner_id} not found")
+    img = voice.store.image(req.source_image_id)
+    if not img or img["character_id"] not in (a["id"], b["id"]):
+        raise Invalid("pick an image of one of the two influencers as the start frame")
+    turns = parse_dialog(req.text, {"a": a["name"], "b": b["name"]})
+    voices = {"a": voice._voice(a.get("voice_id")), "b": voice._voice(b.get("voice_id"))}
+    width, height = voice.motion.size(req, img["width"], img["height"])
+    spec_a, spec_b = CharacterSpec.model_validate(a["spec"]), CharacterSpec.model_validate(b["spec"])
+    prompt = (f"Two people talking to each other and to the camera. On the left, "
+              f"{talk_prompt(spec_a if req.left == 'a' else spec_b)} On the right, "
+              f"{talk_prompt(spec_b if req.left == 'a' else spec_a)} {req.prompt}").strip()
+    seed = req.seed if req.seed is not None else random.randrange(2**32)
+
+    async def run(job: Job) -> list[dict]:
+        work = voice._work(job)
+        try:
+            wavs: list[bytes] = []
+            for i, (speaker, line) in enumerate(turns):
+                speech = await voice._synthesize(job, req.model_copy(update={"text": line}), voices[speaker], work,
+                                                 (0.15 * i / len(turns), 0.15 * (i + 1) / len(turns)))
+                wavs.append(speech.wav)
+            pauses = [DIALOG_PAUSE] * len(wavs)
+            mix, spans = join_wavs(wavs, pauses)
+            tracks = {s: join_wavs([w if sp == s else silence_like(w) for (sp, _), w in zip(turns, wavs)], pauses)[0]
+                      for s in ("a", "b")}
+            (work / "mix.wav").write_bytes(mix)
+            info = await asyncio.to_thread(probe, work / "mix.wav")
+            if info.duration > MAX_TALK_SECONDS + 0.5:
+                raise Invalid(f"the dialogue runs {info.duration:.0f} s; shorten it to {MAX_TALK_SECONDS} s")
+            names = {"a": a["name"], "b": b["name"]}
+            segments = [{"start": round(x, 3), "end": round(y, 3), "text": line, "speaker": names[sp]}
+                        for (sp, line), (x, y) in zip(turns, spans)]
+            first, second = ("a", "b") if req.left == "a" else ("b", "a")
+            split = await asyncio.to_thread(_split_x, voice.detector, voice.store.image_path(img["id"]), width)
+            up = voice.comfy.upload
+            params = TalkParams(
+                image=await voice.motion.upload_source(img),
+                audio=await up(tracks[first], f"studio_{job.id}_speaker1.wav"),
+                audio_2=await up(tracks[second], f"studio_{job.id}_speaker2.wav"),
+                mask_1=await up(_mask_png(width, height, 0, split), f"studio_{job.id}_mask1.png"),
+                mask_2=await up(_mask_png(width, height, split, width), f"studio_{job.id}_mask2.png"),
+                mix=await up(mix, f"studio_{job.id}_mix.wav"),
+                frames=max(1, math.ceil(info.duration * TALK_FPS)), width=width, height=height,
+                prompt=prompt, seed=seed, smooth=req.smooth,
+            )
+            graph = build_talk_graph(params)
+            job.progress = 0.17
+            (video,) = await voice.comfy.run(graph, lambda p: setattr(job, "progress", 0.17 + 0.83 * p),
+                                             progress_nodes=graph.samplers())
+            out = work / "dialog.mp4"
+            out.write_bytes(video)
+            caption = " / ".join(f"{names[s]}: {t}" for s, t in turns)
+            caption = (caption[:77] + "…") if len(caption) > 80 else caption
+            return [voice.store.save_clip(
+                out, kind="talk", ext="mp4", info=(await asyncio.to_thread(probe, out)).public(), caption=caption,
+                prompt=prompt, seed=seed, character_id=a["id"], source_image_id=img["id"],
+                meta={"dialog": True, "partner_id": b["id"], "language": req.language, "segments": segments})]
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    return voice.jobs.submit("dialog", run, group="talk")
 
 
 TRANSCRIBE_SECONDS = 180

@@ -139,6 +139,10 @@ def scene_prompt(spec: CharacterSpec, scene: str, extra: str = "") -> str:
     return " ".join(parts)
 
 
+PRODUCT_LINE = ("The product from the last reference image appears in the scene with its exact shape, colors, "
+                "label and logo, held naturally and clearly visible.")
+
+
 def angle_prompt(spec: CharacterSpec, angle: Angle) -> str:
     return scene_prompt(spec, angle.scene)
 

@@ -86,6 +86,7 @@ class ContentRequest(BaseModel):
     aspect: str = "4:5"
     seed: int | None = Field(None, ge=0, le=2**53)
     face_detail: bool = False  # redraw small faces (full-body shots) at full resolution
+    product_image_id: str | None = None  # an uploaded product photo, shown in the scene (UGC)
 
     check_aspect = field_validator("aspect")(_check_aspect)
 
@@ -253,4 +254,19 @@ class BatchRequest(BaseModel):
     def _not_empty(self) -> BatchRequest:
         if not self.posts and not self.talks:
             raise ValueError("add at least one post or talking video")
+        return self
+
+
+class DialogRequest(VoiceSettings, MotionBase):
+    """Two influencers talking: `text` is the script, one line per turn ("A: …" / "B: …")."""
+
+    partner_id: str
+    left: Literal["a", "b"] = "a"  # who stands on the left of the start frame
+    resolution: Literal["480p"] = "480p"
+    prompt: str = Field("", max_length=300)
+
+    @model_validator(mode="after")
+    def _script_required(self) -> DialogRequest:
+        if not self.text.strip():
+            raise ValueError("write the dialogue: one line per turn, starting with A: or B:")
         return self

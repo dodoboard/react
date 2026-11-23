@@ -1182,3 +1182,16 @@ select.select--sm {
   display: grid;
   gap: 6px;
 }
+.product-upload__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.product-upload__item img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--raised);
+  flex: none;
+}

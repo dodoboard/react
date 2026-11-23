@@ -17,7 +17,7 @@ from .face import CROP_SIZE, DENOISE, SMALL_FACE, Detector, crop_box, largest, p
 from .flux2 import Profile, build_graph
 from .jobs import Job, JobQueue
 from .models import BuilderRequest, CharacterSpec, ContentRequest, CreateCharacterRequest, UpdateCharacterRequest
-from .prompting import NEGATIVE, angle_prompt, character_prompt, face_prompt, scene_prompt
+from .prompting import NEGATIVE, PRODUCT_LINE, angle_prompt, character_prompt, face_prompt, scene_prompt
 from .store import Store
 
 
@@ -194,18 +194,26 @@ class Studio:
         scene, extra = (preset.scene, req.prompt) if preset else (req.prompt, "")
         prompt, seed = scene_prompt(spec, scene, extra), self._seed(req.seed)
         caption = ", ".join(filter(None, (scene, extra.strip())))
+        reference_ids = list(character["reference_ids"])
+        if req.product_image_id:  # FLUX.2 takes max_refs references: the product gets the last slot
+            product = self._require_image(req.product_image_id)
+            if product["kind"] != "upload":
+                raise Invalid("the product must be an uploaded photo")
+            reference_ids = reference_ids[: self.profile.max_refs - 1] + [product["id"]]
+            prompt = f"{prompt} {PRODUCT_LINE}"
 
         async def run(job: Job) -> list[dict]:
-            refs = await self._upload_references(character["reference_ids"])
+            refs = await self._upload_references(reference_ids)
             split = 0.6 if req.face_detail else 1.0
             images = await self._render(
                 job, prompt=prompt, aspect=req.aspect, seed=seed, count=req.count,
                 references=refs, loras=self._loras(character), span=(0.0, split),
             )
             if req.face_detail:  # full-body shots: redraw small faces at full resolution
+                face_refs = refs[:-1] if req.product_image_id else refs  # the face pass needs no product
                 step = (1 - split) / len(images)
                 images = [
-                    await self._refine_face(job, d, character, refs, seed=seed + i, only_small=True,
+                    await self._refine_face(job, d, character, face_refs, seed=seed + i, only_small=True,
                                             span=(split + i * step, split + (i + 1) * step)) or d
                     for i, d in enumerate(images)
                 ]

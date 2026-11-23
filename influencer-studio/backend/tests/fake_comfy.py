@@ -55,7 +55,7 @@ KNOWN_NODES = {
     "WanImageToVideo", "KSamplerAdvanced", "FrameInterpolationModelLoader", "FrameInterpolate", "CreateVideo",
     "SaveVideo", "ModelPatchLoader", "AudioEncoderLoader", "AudioEncoderEncode", "WanInfiniteTalkToVideo",
     # quality
-    "UpscaleModelLoader", "ImageUpscaleWithModel", "ImageScaleBy", "SplitSigmasDenoise",
+    "UpscaleModelLoader", "ImageUpscaleWithModel", "ImageScaleBy", "SplitSigmasDenoise", "ImageToMask",
 }
 IMG2IMG_COLOR = (200, 40, 160)
 _MODEL_INPUTS = {
@@ -161,6 +161,7 @@ def create_fake_comfy(models: dict[str, list[str]] | None = None, delay: float =
     running: set[str] = set()
     clients: dict[str, WebSocket] = {}
     inputs: dict[str, bytes] = {}
+    app.state.inputs = inputs  # uploaded files, for test assertions
     outputs: dict[str, bytes] = {}
     history: dict[str, dict] = {}
 

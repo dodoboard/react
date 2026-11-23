@@ -19,8 +19,9 @@ from .hd import HDStudio
 from .jobs import JobQueue
 from .lora import DEFAULT_STEPS, LoraTrainer
 from .models import (
-    BatchRequest, BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, ExportRequest,
-    IdentityPackRequest, MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest, TalkRequest,
+    BatchRequest, BuilderRequest, ContentRequest, CreateCharacterRequest, CuesUpdate, DanceRequest, DialogRequest,
+    ExportRequest, IdentityPackRequest, MotionPresetRequest, MusicDanceRequest, PromptPreviewRequest, SpeakRequest,
+    TalkRequest,
     TranscribeRequest, UpdateCharacterRequest,
 )
 from .motion import MotionStudio, new_upload_path, public_schema
@@ -30,7 +31,7 @@ from .service import Invalid, NotFound, Studio
 from .settings import Settings
 from .store import Store
 from .subtitles import clip_cues, retime
-from .voice import VRAM_POLICIES, TTSClient, VoiceStudio, transcribe_job
+from .voice import VRAM_POLICIES, TTSClient, VoiceStudio, dialog_job, transcribe_job
 from .voice import public_schema as voice_schema
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -56,6 +57,7 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     if settings.tts_vram not in VRAM_POLICIES:
         raise SystemExit(f"STUDIO_TTS_VRAM must be one of {', '.join(VRAM_POLICIES)}")
     voice = VoiceStudio(comfy, tts, store, jobs, motion, settings.tts_vram, settings.tts_vram_gb)
+    voice.detector = studio.detector
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -328,6 +330,10 @@ def create_app(settings: Settings | None = None, comfy: ComfyBackend | None = No
     @app.post("/api/voice/speak")
     async def voice_speak(req: SpeakRequest) -> dict:
         return job_response(voice.speak(req))
+
+    @app.post("/api/characters/{character_id}/dialog")
+    async def character_dialog(character_id: str, req: DialogRequest) -> dict:
+        return job_response(dialog_job(voice, character_id, req))
 
     @app.post("/api/characters/{character_id}/talk")
     async def character_talk(character_id: str, req: TalkRequest) -> dict:

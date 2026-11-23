@@ -8,7 +8,7 @@ import { Chip, Empty, ErrorNote, ProgressBar, Segmented } from "../components/ui
 import { useJob, usePersistentState } from "../hooks";
 import type { Character, CharacterDetail, ClipMeta, Job, Orientation, VoiceHealth, VoiceSchema } from "../types";
 
-type SpeechSource = "script" | "recording";
+type SpeechSource = "script" | "recording" | "dialog";
 
 const CHARS_PER_SECOND = 14; // typical TTS pace; numbers expand when spoken, so this is a lower bound
 const EXAMPLE = "Merhaba! Bugün size bu sonbaharın en sevdiğim üç kombinini göstereceğim. Hazırsanız başlayalım!";
@@ -46,6 +46,9 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
   const [sourceId, setSourceId] = useState<string | null>(null);
 
   const [speechSource, setSpeechSource] = usePersistentState<SpeechSource>("studio.talk.source", () => "script");
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [left, setLeft] = useState<"a" | "b">("a");
+  const [dialogScript, setDialogScript] = usePersistentState("studio.talk.dialog", () => "");
   const [language, setLanguage] = usePersistentState("studio.talk.language", () => "tr");
   const [script, setScript] = usePersistentState("studio.talk.script", () => "");
   const [exaggeration, setExaggeration] = useState(0.5);
@@ -128,8 +131,16 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
   const size = schema.resolutions[resolveOrientation(orientation, source?.width ?? 1, source?.height ?? 1)];
   const voiceOptions: VoiceOptions = { language, exaggeration, cfg_weight: cfgWeight, seed: null };
   const speechTooLong = !!speech && speech.duration > limit + 0.5;
+  const partners = (characters ?? []).filter((c) => c.id !== selected?.id);
+  const partner = partners.find((c) => c.id === partnerId) ?? partners[0];
   const ready =
-    !!selected && !!source && (speechSource === "script" ? !!script.trim() : !!speech && !speechTooLong);
+    !!selected &&
+    !!source &&
+    (speechSource === "script"
+      ? !!script.trim()
+      : speechSource === "recording"
+        ? !!speech && !speechTooLong
+        : !!partner && !!dialogScript.trim());
   const talkClips = clips.filter((c) => c.kind === "talk");
   const speechClips = clips.filter((c) => c.kind === "speech");
 
@@ -157,7 +168,10 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
       speech_id: speechSource === "recording" ? (speech?.id ?? null) : null,
     };
     try {
-      const job = await api.talk(selected.id, body);
+      const job =
+        speechSource === "dialog" && partner
+          ? await api.dialog(selected.id, { ...body, text: dialogScript, speech_id: null, partner_id: partner.id, left })
+          : await api.talk(selected.id, body);
       setJobs((prev) => [{ id: job.id, aspect: size.width / size.height }, ...prev]);
     } catch (e) {
       setError((e as Error).message);
@@ -213,6 +227,7 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
               options={[
                 { value: "script", label: "Write a script" },
                 { value: "recording", label: "Use a recording" },
+                { value: "dialog", label: "Dialog" },
               ]}
               onChange={setSpeechSource}
             />
@@ -261,7 +276,7 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
                 </button>
                 {previewJob && <SpeechPreview key={previewJob} jobId={previewJob} onDone={speechDone} />}
               </>
-            ) : (
+            ) : speechSource === "recording" ? (
               <>
                 <MediaLibrary
                   kind="speech"
@@ -273,6 +288,47 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
                 />
                 {speechTooLong && <span className="error-note">This take is {speech.duration.toFixed(0)} s; talking videos are limited to {limit} s.</span>}
                 <p className="muted small">Voice previews land here too, so you can lip-sync the exact take you liked.</p>
+              </>
+            ) : (
+              <>
+                <div className="field">
+                  <span className="field__label">Talking with</span>
+                  {partners.length === 0 ? (
+                    <p className="muted small">
+                      A dialogue needs a second influencer: <a href="#/builder">design one</a>.
+                    </p>
+                  ) : (
+                    <CharacterPicker characters={partners} selectedId={partner?.id} onPick={setPartnerId} />
+                  )}
+                </div>
+                {partner && (
+                  <Segmented
+                    size="sm"
+                    label="Who is on the left"
+                    value={left}
+                    options={[
+                      { value: "a", label: `${selected?.name} left` },
+                      { value: "b", label: `${partner.name} left` },
+                    ]}
+                    onChange={setLeft}
+                  />
+                )}
+                <label className="field">
+                  <span className="field__label">
+                    Dialogue <span className="muted">· one line per turn, A: {selected?.name} · B: {partner?.name ?? "…"}</span>
+                  </span>
+                  <textarea
+                    rows={6}
+                    maxLength={1500}
+                    value={dialogScript}
+                    onChange={(e) => setDialogScript(e.target.value)}
+                    placeholder={"A: Merhaba! Bugün yeni koleksiyonu tanıtıyoruz.\nB: Ben de çok heyecanlıyım, hadi başlayalım!"}
+                  />
+                </label>
+                <p className="muted small">
+                  Pick a start frame with both people in it, side by side. Each line is spoken in its speaker's own voice and lip-synced
+                  (InfiniteTalk two-speaker mode); the frame is split between the two faces.
+                </p>
               </>
             )}
           </section>
@@ -312,7 +368,7 @@ export function TalkPage({ characterId, navigate }: { characterId?: string; navi
         </div>
 
         <footer className="panel__footer">
-          {speechSource === "script" && <TtsWarning health={health} />}
+          {speechSource !== "recording" && <TtsWarning health={health} />}
           {health?.missing_nodes?.length ? (
             <p className="error-note">Update ComfyUI: it lacks {health.missing_nodes.join(", ")}.</p>
           ) : null}

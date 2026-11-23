@@ -33,7 +33,9 @@ def required_nodes(profile: Profile) -> dict[str, frozenset[str]]:
         "dance": _types(build_dance_graph(DanceParams("i.png", "d.mp4", 81, 480, 832, "p", 1, audio="a.wav"))),
         "music": _types(build_music_graph(MusicDanceParams("i.png", "a.wav", 10, "kpop", "medium", 480, 832, 1))),
         "motion": plain,
-        "talk": _types(build_talk_graph(TalkParams("i.png", "a.wav", 100, 480, 832, "p", 1))),
+        "talk": _types(build_talk_graph(TalkParams("i.png", "a.wav", 100, 480, 832, "p", 1)),
+                       build_talk_graph(TalkParams("i.png", "a.wav", 100, 480, 832, "p", 1, audio_2="b.wav",
+                                                   mask_1="m1.png", mask_2="m2.png", mix="m.wav"))),
         "smooth": smooth,
         "hd": _types(build_image_upscale_graph("i.png"), build_video_upscale_graph("v.mp4", 1080, 1920)),
     }

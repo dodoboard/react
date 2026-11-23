@@ -129,6 +129,19 @@ python scripts\download_models.py --comfy C:\ComfyUI_windows_portable\ComfyUI --
 
 Yalnızca kendi sesini ya da açık izin aldığın birinin sesini klonla. Chatterbox her çıktıya duyulamayan bir yapay zekâ filigranı (Perth) ekler; yayınladığın konuşan videoları da yapay zekâ ile üretildiğini belirterek etiketle.
 
+### Diyalog (iki kişi)
+
+Talk'taki **Dialog** modu iki influencer'ı aynı karede konuşturur. Script'te her satır bir konuşma sırasıdır: `A:` seçili karakter, `B:` partner (ya da karakterlerin adları).
+
+- Her satır konuşanın kendi klonlanmış sesiyle seslendirilir.
+- Video InfiniteTalk'ın iki konuşmacı moduyla üretilir: her konuşmacının ayrı ses izi ve kare içindeki bölgesi var.
+- Bölgeler YuNet ile bulunan iki yüzün arasından bölünür; yüz bulunamazsa kare ortadan ikiye ayrılır.
+- Başlangıç karesi iki kişinin yan yana durduğu bir görsel olmalı. Kimin solda durduğunu seç.
+
+### Ürün tanıtımı (UGC)
+
+Create'te **Product** kartına ürün fotoğrafı ekle (düz zemin, net çekim). Fotoğraf FLUX.2'ye son referans görseli olarak verilir: ürün şekli, rengi ve etiketiyle sahnede görünür. Product hold / Unboxing preset'leriyle iyi çalışır; ardından Talk'ta "Ürün tanıtımı" script'iyle konuşan video yapılabilir.
+
 ## Export
 
 Klipleri tek bir paylaşıma hazır videoda birleştirir: Talk/Motion kartlarındaki **Export** ya da Export sayfasındaki klip listesiyle zaman çizelgesine ekle, sırala, her birini **In / Out** ile kırp.
@@ -265,4 +278,3 @@ cd frontend && npm install && npm run dev  # http://localhost:5173, /api → 786
 - Videodaki bir kişiyi karakterle değiştirme: SCAIL-2 (ComfyUI'da hazır şablonu var)
 - Var olan bir videoyu dublajlama (video-to-video lipsync): ComfyUI çekirdeğindeki InfiniteTalk şimdilik yalnızca görselden video üretiyor
 - Export'ta geçiş efektleri ve kapak görseli (thumbnail) seçimi
-- İki kişilik diyalog: InfiniteTalk `two_speakers` modu

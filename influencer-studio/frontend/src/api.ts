@@ -65,6 +65,7 @@ export interface ContentBody {
   aspect: string;
   seed: number | null;
   face_detail: boolean;
+  product_image_id?: string | null;
 }
 
 export interface MotionCommon {
@@ -235,6 +236,8 @@ export const api = {
   voiceSchema: () => request<VoiceSchema>("/api/voice/schema"),
   voiceHealth: () => request<VoiceHealth>("/api/voice/health"),
   speak: (body: SpeakBody) => request<Job<ClipMeta>>("/api/voice/speak", json("POST", body)),
+  dialog: (characterId: string, body: TalkBody & { partner_id: string; left: "a" | "b" }) =>
+    request<Job<ClipMeta>>(`/api/characters/${characterId}/dialog`, json("POST", body)),
   talk: (characterId: string, body: TalkBody) =>
     request<Job<ClipMeta>>(`/api/characters/${characterId}/talk`, json("POST", body)),
 };

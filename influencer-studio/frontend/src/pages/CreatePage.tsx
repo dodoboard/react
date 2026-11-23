@@ -4,6 +4,7 @@ import { ImageEnhanceActions, type StartedJob } from "../components/Enhance";
 import { ImageTile } from "../components/ImageTile";
 import { JobView } from "../components/JobView";
 import { Lightbox } from "../components/Lightbox";
+import { ProductUpload } from "../components/ProductUpload";
 import { Chip, Empty, ErrorNote, Segmented } from "../components/ui";
 import { usePersistentState, useStudio } from "../hooks";
 import type { Character, ImageMeta } from "../types";
@@ -19,6 +20,7 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
   const [prompt, setPrompt] = useState("");
   const [aspect, setAspect] = useState("4:5");
   const [count, setCount] = useState(2);
+  const [product, setProduct] = useState<ImageMeta | null>(null);
   const [faceDetail, setFaceDetail] = usePersistentState("studio.create.faceDetail", () => true);
   const [jobs, setJobs] = useState<ContentJob[]>([]);
   const [recent, setRecent] = useState<ImageMeta[]>([]);
@@ -56,7 +58,8 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
     if (!selected) return;
     setError(null);
     try {
-      const job = await api.content(selected.id, { preset_id: presetId, prompt, count, aspect, seed: null, face_detail: faceDetail });
+      const job = await api.content(selected.id, { preset_id: presetId, prompt, count, aspect, seed: null, face_detail: faceDetail,
+        product_image_id: product?.id ?? null });
       setJobs((prev) => [{ id: job.id, count, aspect: ratio(aspect) }, ...prev]);
     } catch (e) {
       setError((e as Error).message);
@@ -119,6 +122,14 @@ export function CreatePage({ characterId, navigate }: { characterId?: string; na
                 </div>
               </div>
             ))}
+          </section>
+
+          <section className="card">
+            <div className="card__title">
+              <span>Product</span>
+              <span className="muted small">for UGC: Product hold, Unboxing…</span>
+            </div>
+            <ProductUpload product={product} onProduct={setProduct} />
           </section>
 
           <section className="card">
