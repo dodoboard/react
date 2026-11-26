@@ -1,0 +1,130 @@
+export type VideoStatus =
+  | "queued" | "scripting" | "scripted" | "visuals" | "voice" | "composing" | "done" | "failed" | "cancelled";
+
+export interface Scene { voiceover: string; visual_prompt: string; on_screen_text: string }
+export interface AdScript { hook: string; scenes: Scene[]; cta: string; caption: string; hashtags: string[]; title: string }
+
+export interface Product {
+  id: number; name: string; description: string; features: string; price: number | null; currency: string;
+  affiliate_url: string; platform: string; commission_rate: number | null; image_path: string | null;
+  image_url: string | null; created_at: string;
+}
+
+export interface Video {
+  id: number; campaign_id: number; variant_index: number; angle: string; hook: string; script: AdScript | null;
+  caption: string; status: VideoStatus; step: string; progress: number; error: string; video_url: string | null;
+  thumb_url: string | null; duration: number | null; tts_chars: number; render_seconds: number; subid: string;
+  ab_label: string; favorite: boolean; platform: string; scheduled_at: string | null; published_at: string | null;
+  publish_url: string; created_at: string; updated_at: string;
+  campaign_name?: string; product_name?: string; tracking_url?: string;
+}
+
+export interface Campaign {
+  id: number; product_id: number; name: string; language: string; tone: string; audience: string; angle_notes: string;
+  visual_style: string; voice_id: string; variants: number; scenes: number; use_i2v: boolean; music: string;
+  target_platform: string; created_at: string; product: { id: number; name: string; image_url: string | null } | null;
+  counts: Record<VideoStatus, number>; total: number; revenue: number; thumb_url: string | null; videos?: Video[];
+}
+
+export interface Health {
+  dry_run: boolean; encoder: string; queue: { running: boolean; pending_jobs: number; current: number[] };
+  ollama: { ok: boolean; error?: string; models?: number; model_ready?: boolean; demo?: boolean };
+  comfy: { ok: boolean; error?: string; gpu?: string; vram_total?: number; vram_free?: number; demo?: boolean };
+  tts: { ok: boolean; error?: string; provider?: string; used?: number; limit?: number; tier?: string; demo?: boolean };
+}
+
+export interface Config {
+  ollama_url: string; ollama_model: string; ollama_temperature: number; comfy_url: string; image_workflow: string;
+  video_workflow: string; use_i2v: boolean; image_steps: number; negative_prompt: string; style_suffix: string;
+  tts_provider: "elevenlabs" | "chatterbox"; elevenlabs_api_key: string; elevenlabs_voice_id: string; elevenlabs_model: string;
+  chatterbox_voice: string; whisper_model: string; video_encoder: "auto" | "h264_nvenc" | "libx264"; subtitle_font: string;
+  subtitle_highlight: string; music_volume: number; end_card_seconds: number; brand_name: string; cta_default: string;
+  ad_disclosure: string; ai_label: boolean; currency: string; tts_cost_per_1k_chars: number; gpu_watts: number;
+  kwh_price: number; youtube_privacy: "private" | "unlisted" | "public"; youtube_auto_upload: boolean; dry_run: boolean;
+}
+
+export interface Voice { id: string; name: string; preview_url: string | null; labels?: Record<string, string>; category?: string }
+export interface Revenue {
+  id: number; day: string; video_id: number | null; campaign_id: number | null; platform: string; amount: number;
+  clicks: number; conversions: number; views: number; note: string; video_label: string | null; campaign_name: string | null;
+}
+export interface Summary {
+  currency: string;
+  kpi: { month_revenue: number; total_revenue: number; total_cost: number; roi: number | null; videos_done: number;
+    videos_active: number; published: number; scheduled: number; clicks: number; conversions: number };
+  series: { day: string; revenue: number; cost: number; videos: number }[];
+  top_videos: { id: number; hook: string; label: string; angle: string; thumb: string | null; revenue: number; clicks: number; conversions: number; views: number }[];
+  angles: { angle: string; avg: number; videos: number }[];
+  platforms: { platform: string; revenue: number }[];
+  campaigns: { id: number; name: string; product: string; videos: number; revenue: number; cost: number; roi: number | null }[];
+}
+
+export class ApiError extends Error {}
+
+async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const isForm = body instanceof FormData;
+  const r = await fetch(url, {
+    method,
+    headers: body && !isForm ? { "Content-Type": "application/json" } : undefined,
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
+  });
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const j = await r.json();
+      msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j);
+    } catch { /* non-json */ }
+    throw new ApiError(msg);
+  }
+  return r.json() as Promise<T>;
+}
+
+const file = (f: File) => { const fd = new FormData(); fd.append("file", f); return fd; };
+
+export const api = {
+  health: () => req<Health>("GET", "/api/health"),
+  config: () => req<Config>("GET", "/api/config"),
+  saveConfig: (patch: Partial<Config>) => req<Config>("PUT", "/api/config", patch),
+  ollamaModels: () => req<{ name: string; size: number }[]>("GET", "/api/ollama/models"),
+  voices: () => req<Voice[]>("GET", "/api/voices"),
+  uploadVoice: (f: File) => req("POST", "/api/voices/upload", file(f)),
+  music: () => req<{ name: string; size: number }[]>("GET", "/api/music"),
+  uploadMusic: (f: File) => req("POST", "/api/music", file(f)),
+  deleteMusic: (n: string) => req("DELETE", `/api/music/${encodeURIComponent(n)}`),
+  workflows: () => req<string[]>("GET", "/api/workflows"),
+  uploadWorkflow: (f: File) => req("POST", "/api/workflows", file(f)),
+
+  products: () => req<Product[]>("GET", "/api/products"),
+  createProduct: (p: Partial<Product>) => req<Product>("POST", "/api/products", p),
+  updateProduct: (id: number, p: Partial<Product>) => req<Product>("PUT", `/api/products/${id}`, p),
+  deleteProduct: (id: number) => req("DELETE", `/api/products/${id}`),
+  productImage: (id: number, f: File) => req<Product>("POST", `/api/products/${id}/image`, file(f)),
+  autofill: (url: string) => req<Partial<Product> & { image_url?: string }>("POST", "/api/products/autofill", { url }),
+
+  campaigns: () => req<Campaign[]>("GET", "/api/campaigns"),
+  campaign: (id: number) => req<Campaign>("GET", `/api/campaigns/${id}`),
+  createCampaign: (b: Record<string, unknown>) => req<Campaign>("POST", "/api/campaigns", b),
+  renderCampaign: (id: number) => req<{ queued: number[] }>("POST", `/api/campaigns/${id}/render`),
+  deleteCampaign: (id: number) => req("DELETE", `/api/campaigns/${id}`),
+
+  videos: (q = "") => req<Video[]>("GET", `/api/videos${q}`),
+  video: (id: number) => req<Video>("GET", `/api/videos/${id}`),
+  saveScript: (id: number, s: AdScript) => req<Video>("PUT", `/api/videos/${id}/script`, s),
+  render: (id: number) => req("POST", `/api/videos/${id}/render`),
+  rescript: (id: number, render = false) => req("POST", `/api/videos/${id}/rescript?render=${render}`),
+  revoice: (id: number) => req("POST", `/api/videos/${id}/revoice`),
+  cancel: (id: number) => req("POST", `/api/videos/${id}/cancel`),
+  patchVideo: (id: number, b: Record<string, unknown>) => req<Video>("PATCH", `/api/videos/${id}`, b),
+  deleteVideo: (id: number) => req("DELETE", `/api/videos/${id}`),
+
+  revenue: () => req<Revenue[]>("GET", "/api/revenue"),
+  addRevenue: (b: Record<string, unknown>) => req("POST", "/api/revenue", b),
+  deleteRevenue: (id: number) => req("DELETE", `/api/revenue/${id}`),
+  importRevenue: (f: File) => req<{ added: number; matched: number }>("POST", "/api/revenue/import", file(f)),
+  summary: (days = 30) => req<Summary>("GET", `/api/analytics/summary?days=${days}`),
+
+  ytStatus: () => req<{ installed: boolean; has_secret: boolean; connected: boolean }>("GET", "/api/youtube/status"),
+  ytConnect: () => req("POST", "/api/youtube/connect"),
+  ytSecret: (f: File) => req("POST", "/api/youtube/secret", file(f)),
+  ytUpload: (id: number) => req<{ url: string }>("POST", `/api/youtube/upload/${id}`),
+};

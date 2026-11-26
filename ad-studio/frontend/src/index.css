@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 246 246 250;
+  --panel: 255 255 255;
+  --elev: 241 241 247;
+  --line: 226 226 236;
+  --fg: 17 17 26;
+  --muted: 104 104 124;
+  color-scheme: light;
+}
+.dark {
+  --bg: 9 9 14;
+  --panel: 17 17 25;
+  --elev: 25 25 36;
+  --line: 38 38 54;
+  --fg: 240 240 248;
+  --muted: 140 140 165;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  @apply bg-bg text-fg font-sans antialiased;
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, rgb(139 92 246 / .10), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgb(236 72 153 / .08), transparent 60%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-line/70 bg-panel/80 backdrop-blur-xl shadow-card; }
+  .input {
+    @apply w-full rounded-xl border border-line bg-elev/60 px-3.5 py-2.5 text-sm text-fg placeholder:text-muted/70
+      outline-none transition focus:border-brand/70 focus:ring-4 focus:ring-brand/15;
+  }
+  .label { @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted; }
+  .grad-text { @apply bg-gradient-to-r from-brand via-fuchsia-400 to-brand-2 bg-clip-text text-transparent; }
+  .grad-bg { @apply bg-gradient-to-br from-brand to-brand-2; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 10px; border: 3px solid rgb(var(--bg)); }
+::-webkit-scrollbar-track { background: transparent; }

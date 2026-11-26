@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import csv
+import io
+from collections import defaultdict
+from datetime import date, timedelta
+
+from fastapi import APIRouter, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from ..config import config
+from ..models import Campaign, Product, RevenueEntry, Video, VideoStatus, session
+
+router = APIRouter(prefix="/api", tags=["revenue"])
+
+
+class RevenueIn(BaseModel):
+    day: date = date.today()
+    video_id: int | None = None
+    campaign_id: int | None = None
+    subid: str | None = None
+    platform: str = ""
+    amount: float = 0
+    clicks: int = 0
+    conversions: int = 0
+    views: int = 0
+    note: str = ""
+
+
+def _resolve(s, body: RevenueIn) -> RevenueEntry:
+    d = body.model_dump(exclude={"subid"})
+    if body.subid and not body.video_id:
+        v = s.query(Video).filter(Video.subid == body.subid.strip()).first()
+        if v:
+            d["video_id"] = v.id
+    if d["video_id"] and not d["campaign_id"]:
+        v = s.get(Video, d["video_id"])
+        d["campaign_id"] = v.campaign_id if v else None
+    return RevenueEntry(**d)
+
+
+@router.get("/revenue")
+def list_revenue(limit: int = 500) -> list[dict]:
+    with session() as s:
+        rows = s.query(RevenueEntry).order_by(RevenueEntry.day.desc(), RevenueEntry.id.desc()).limit(limit).all()
+        vids = {v.id: v for v in s.query(Video).filter(Video.id.in_({r.video_id for r in rows if r.video_id})).all()}
+        camps = {c.id: c for c in s.query(Campaign).all()}
+        return [r.model_dump() | {"video_label": f"#{r.video_id} {vids[r.video_id].ab_label}" if r.video_id in vids else None,
+                                  "campaign_name": camps[r.campaign_id].name if r.campaign_id in camps else None}
+                for r in rows]
+
+
+@router.post("/revenue")
+def add_revenue(body: RevenueIn) -> dict:
+    with session() as s:
+        r = _resolve(s, body)
+        s.add(r)
+        s.commit()
+        s.refresh(r)
+        return r.model_dump()
+
+
+@router.delete("/revenue/{rid}")
+def delete_revenue(rid: int) -> dict:
+    with session() as s:
+        r = s.get(RevenueEntry, rid)
+        if not r:
+            raise HTTPException(404)
+        s.delete(r)
+        s.commit()
+    return {"ok": True}
+
+
+@router.post("/revenue/import")
+async def import_csv(file: UploadFile) -> dict:
+    """Columns (header, any order): date|day, subid, amount|commission|revenue, clicks, conversions|orders, views, platform, note."""
+    text = (await file.read()).decode("utf-8-sig", errors="ignore")
+    sample = text[:2048]
+    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t") if sample else csv.excel
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    alias = {"date": "day", "tarih": "day", "commission": "amount", "revenue": "amount", "kazanç": "amount",
+             "komisyon": "amount", "orders": "conversions", "sipariş": "conversions", "tıklama": "clicks",
+             "izlenme": "views", "sub_id": "subid", "subid1": "subid"}
+    added, matched = 0, 0
+    with session() as s:
+        for raw in reader:
+            row = {alias.get(k.strip().lower(), k.strip().lower()): (v or "").strip() for k, v in raw.items() if k}
+            try:
+                body = RevenueIn(
+                    day=_date(row.get("day")) or date.today(), subid=row.get("subid") or None,
+                    amount=_f(row.get("amount")), clicks=int(_f(row.get("clicks"))), conversions=int(_f(row.get("conversions"))),
+                    views=int(_f(row.get("views"))), platform=row.get("platform", ""), note=row.get("note", ""))
+            except ValueError:
+                continue
+            r = _resolve(s, body)
+            matched += bool(r.video_id)
+            s.add(r)
+            added += 1
+        s.commit()
+    return {"added": added, "matched": matched}
+
+
+def _f(v: str | None) -> float:
+    if not v:
+        return 0.0
+    v = v.replace(" ", "").replace("₺", "").replace("$", "").replace("€", "")
+    if "," in v and "." in v:
+        v = v.replace(".", "").replace(",", ".") if v.rfind(",") > v.rfind(".") else v.replace(",", "")
+    return float(v.replace(",", "."))
+
+
+def _date(v: str | None) -> date | None:
+    if not v:
+        return None
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            from datetime import datetime
+            return datetime.strptime(v[:10], fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def video_cost(v: Video) -> float:
+    cfg = config.get()
+    return v.tts_chars / 1000 * cfg.tts_cost_per_1k_chars + v.render_seconds / 3600 * cfg.gpu_watts / 1000 * cfg.kwh_price
+
+
+@router.get("/analytics/summary")
+def summary(days: int = 30) -> dict:
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+    month_start = today.replace(day=1)
+    with session() as s:
+        vids = s.query(Video).all()
+        revs = s.query(RevenueEntry).all()
+        camps = {c.id: c for c in s.query(Campaign).all()}
+        prods = {p.id: p for p in s.query(Product).all()}
+
+    series = {start + timedelta(days=i): {"revenue": 0.0, "cost": 0.0, "videos": 0} for i in range(days)}
+    for r in revs:
+        if r.day in series:
+            series[r.day]["revenue"] += r.amount
+    for v in vids:
+        d = v.created_at.date()
+        if d in series:
+            series[d]["cost"] += video_cost(v)
+            series[d]["videos"] += v.status == VideoStatus.done
+
+    by_video: dict[int, dict] = defaultdict(lambda: {"revenue": 0.0, "clicks": 0, "conversions": 0, "views": 0})
+    by_camp: dict[int, float] = defaultdict(float)
+    by_platform: dict[str, float] = defaultdict(float)
+    for r in revs:
+        if r.video_id:
+            b = by_video[r.video_id]
+            b["revenue"] += r.amount
+            b["clicks"] += r.clicks
+            b["conversions"] += r.conversions
+            b["views"] += r.views
+        if r.campaign_id:
+            by_camp[r.campaign_id] += r.amount
+        by_platform[r.platform or "diğer"] += r.amount
+
+    vmap = {v.id: v for v in vids}
+    top = sorted(by_video.items(), key=lambda kv: kv[1]["revenue"], reverse=True)[:8]
+    angle_rev: dict[str, list[float]] = defaultdict(list)
+    for vid, b in by_video.items():
+        if vid in vmap:
+            angle_rev[vmap[vid].angle].append(b["revenue"])
+
+    camp_rows = []
+    for cid, c in camps.items():
+        cv = [v for v in vids if v.campaign_id == cid]
+        cost = sum(video_cost(v) for v in cv)
+        rev = by_camp.get(cid, 0.0)
+        camp_rows.append({"id": cid, "name": c.name, "product": prods[c.product_id].name if c.product_id in prods else "",
+                          "videos": len(cv), "revenue": round(rev, 2), "cost": round(cost, 2),
+                          "roi": round((rev - cost) / cost * 100, 1) if cost >= 1 else None})
+
+    total_cost = sum(video_cost(v) for v in vids)
+    total_rev = sum(r.amount for r in revs)
+    month_rev = sum(r.amount for r in revs if r.day >= month_start)
+    return {
+        "currency": config.get().currency,
+        "kpi": {
+            "month_revenue": round(month_rev, 2), "total_revenue": round(total_rev, 2), "total_cost": round(total_cost, 2),
+            "roi": round((total_rev - total_cost) / total_cost * 100, 1) if total_cost >= 1 else None,
+            "videos_done": sum(v.status == VideoStatus.done for v in vids),
+            "videos_active": sum(v.status not in (VideoStatus.done, VideoStatus.failed, VideoStatus.cancelled, VideoStatus.scripted) for v in vids),
+            "published": sum(bool(v.published_at) for v in vids),
+            "scheduled": sum(bool(v.scheduled_at and not v.published_at) for v in vids),
+            "clicks": sum(r.clicks for r in revs), "conversions": sum(r.conversions for r in revs),
+        },
+        "series": [{"day": d.isoformat(), **{k: round(x, 2) if isinstance(x, float) else x for k, x in val.items()}}
+                   for d, val in series.items()],
+        "top_videos": [{"id": vid, "hook": vmap[vid].hook, "label": vmap[vid].ab_label, "angle": vmap[vid].angle,
+                        "thumb": vmap[vid].thumb_path and f"/media/renders/{vid}/thumb.jpg", **b}
+                       for vid, b in top if vid in vmap],
+        "angles": sorted([{"angle": a, "avg": round(sum(x) / len(x), 2), "videos": len(x)} for a, x in angle_rev.items()],
+                         key=lambda r: r["avg"], reverse=True),
+        "platforms": [{"platform": k, "revenue": round(v, 2)} for k, v in sorted(by_platform.items(), key=lambda kv: -kv[1])],
+        "campaigns": sorted(camp_rows, key=lambda r: r["revenue"], reverse=True),
+    }

@@ -1,0 +1,70 @@
+"""Seed a running AdForge (ideally ADF_DRY_RUN=1) with demo products, campaigns and revenue.
+
+usage: python scripts/demo_seed.py [http://127.0.0.1:8000]
+"""
+from __future__ import annotations
+
+import io
+import random
+import sys
+import time
+from datetime import date, timedelta
+
+import httpx
+from PIL import Image, ImageDraw
+
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
+PRODUCTS = [
+    ("Kablosuz Kulaklık Aura X1", "40 saat pil ömrü\nAktif gürültü engelleme\n10 dk şarjla 5 saat\nIPX4 su direnci", 1299.9, "Trendyol", (124, 58, 237)),
+    ("Akıllı Termos Kupa 350ml", "Sıcaklığı 12 saat korur\nLED sıcaklık göstergesi\nSızdırmaz kapak", 449.0, "Hepsiburada", (236, 72, 153)),
+    ("Mini Projektör Lumo", "1080p destek\n120 inç görüntü\nDahili hoparlör\nTelefonla kablosuz bağlantı", 2899.0, "Amazon", (14, 165, 233)),
+]
+
+
+def product_png(color: tuple[int, int, int]) -> bytes:
+    img = Image.new("RGB", (800, 800), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((200, 160, 600, 640), 80, fill=color)
+    d.ellipse((300, 260, 500, 460), fill=(255, 255, 255))
+    d.ellipse((350, 310, 450, 410), fill=tuple(int(c * 0.6) for c in color))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def main() -> None:
+    c = httpx.Client(base_url=BASE, timeout=60)
+    camps = []
+    for name, feats, price, platform, color in PRODUCTS:
+        p = c.post("/api/products", json={"name": name, "features": feats, "price": price, "platform": platform,
+                                          "description": f"{name} — günlük kullanım için tasarlandı.",
+                                          "affiliate_url": f"https://example.com/p/{random.randint(1000, 9999)}?aff=demo&sub={{subid}}",
+                                          "commission_rate": random.choice([5, 8, 10, 12])}).json()
+        c.post(f"/api/products/{p['id']}/image", files={"file": ("p.png", product_png(color), "image/png")})
+        camps.append(c.post("/api/campaigns", json={"product_id": p["id"], "variants": 4, "scenes": 3,
+                                                     "auto_render": True, "tone": random.choice(["enerjik", "samimi", "lüks"])}).json())
+    print("rendering…", end="", flush=True)
+    while any(v["status"] not in ("done", "failed") for v in c.get("/api/videos").json()):
+        print(".", end="", flush=True)
+        time.sleep(2)
+    print()
+    vids = c.get("/api/videos?status=done").json()
+    for i, v in enumerate(vids):
+        when = (date.today() + timedelta(days=i % 9 - 3)).isoformat()
+        if i % 3 == 0:
+            c.patch(f"/api/videos/{v['id']}", json={"published_at": f"{when}T19:00:00", "platform": random.choice(["tiktok", "reels", "youtube"])})
+        elif i % 3 == 1:
+            c.patch(f"/api/videos/{v['id']}", json={"scheduled_at": f"{(date.today() + timedelta(days=i % 6 + 1)).isoformat()}T21:00:00"})
+    for d in range(28):
+        day = date.today() - timedelta(days=d)
+        for v in random.sample(vids, k=min(len(vids), random.randint(1, 3))):
+            clicks = random.randint(20, 400)
+            conv = random.randint(0, max(1, clicks // 25))
+            c.post("/api/revenue", json={"day": day.isoformat(), "video_id": v["id"], "platform": random.choice(["tiktok", "reels", "youtube"]),
+                                         "amount": round(conv * random.uniform(30, 140), 2), "clicks": clicks, "conversions": conv,
+                                         "views": clicks * random.randint(20, 60)})
+    print(f"seeded {len(PRODUCTS)} products, {len(camps)} campaigns, {len(vids)} videos")
+
+
+if __name__ == "__main__":
+    main()
