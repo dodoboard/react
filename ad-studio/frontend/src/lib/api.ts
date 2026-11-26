@@ -56,7 +56,9 @@ export interface Config {
   video_workflow: string; use_i2v: boolean; i2v_mode: I2V; product_mode: "composite" | "kontext" | "off";
   kontext_workflow: string; avatar_workflow: string; caption_style: "bold_yellow" | "white_box" | "gradient_pop";
   sfx_volume: number; progress_bar: boolean; hook_punch: boolean; price_badge: boolean; hook_tournament: boolean;
-  hooks_per_slot: number; image_steps: number; negative_prompt: string; style_suffix: string;
+  hooks_per_slot: number; image_steps: number; realism: boolean; realism_lora: string; realism_lora_strength: number;
+  upscale_model: string; i2v_fast_lora: string; doc_i2v_ratio: number; presenter_chunk: number; identity_lock: boolean;
+  lut_ads: string; lut_doc: string; negative_prompt: string; style_suffix: string;
   tts_provider: "elevenlabs" | "chatterbox"; elevenlabs_api_key: string; elevenlabs_voice_id: string; elevenlabs_model: string;
   chatterbox_voice: string; whisper_model: string; video_encoder: "auto" | "h264_nvenc" | "libx264"; subtitle_font: string;
   subtitle_highlight: string; music_volume: number; end_card_seconds: number; brand_name: string; cta_default: string;
@@ -95,7 +97,8 @@ export interface Avatar { name: string; url: string }
 
 export interface Character {
   id: number; name: string; persona: string; speaking_style: string; catchphrases: string; opening_line: string;
-  closing_line: string; look_prompt: string; avatar: string; voice_id: string; language: string; avatar_url: string | null; channels: number;
+  closing_line: string; look_prompt: string; avatar: string; voice_id: string; voice_settings: string; language: string;
+  avatar_url: string | null; channels: number;
 }
 export type EpStatus = "queued" | "outline" | "script" | "gate" | "voice" | "visuals" | "compose" | "thumbnail" | "shorts"
   | "ready" | "uploading" | "scheduled" | "published" | "needs_review" | "failed" | "cancelled";
@@ -116,6 +119,9 @@ export interface Channel {
   needs_review: number; next: Episode | null; next_slots: string[]; views: number;
 }
 export interface Topic { id: number; channel_id: number; title: string; angle: string; hook: string; score: number; sensitive: boolean; sensitive_reason: string; status: "idea" | "approved" | "rejected" | "used" }
+
+export interface DoctorCheck { id: string; group: string; label: string; status: "ok" | "warn" | "fail" | "skip"; detail: string; fix: string }
+export interface SmokeResult { steps: { name: string; ok: boolean; seconds: number; detail: string }[]; video_url: string | null; image_url: string | null }
 
 const qb = (url: string, brandId?: number | null) =>
   brandId ? `${url}${url.includes("?") ? "&" : "?"}brand_id=${brandId}` : url;
@@ -229,6 +235,8 @@ export const api = {
   deleteEpisode: (id: number) => req("DELETE", `/api/docu/episodes/${id}`),
   quota: () => req<{ used: number; limit: number; episode_cost: number; uploads_left: number }>("GET", "/api/docu/quota"),
   upcoming: () => req<Episode[]>("GET", "/api/docu/upcoming"),
+  doctor: (deep = false) => req<{ status: string; dry_run: boolean; checks: DoctorCheck[] }>("GET", `/api/doctor?deep=${deep}`),
+  smoke: () => req<SmokeResult>("POST", "/api/doctor/smoke"),
   rules: () => req<Rule[]>("GET", "/api/autopilot"),
   saveRule: (r: Partial<Rule>) => r.id ? req<Rule>("PUT", `/api/autopilot/${r.id}`, r) : req<Rule>("POST", "/api/autopilot", r),
   deleteRule: (id: number) => req("DELETE", `/api/autopilot/${id}`),

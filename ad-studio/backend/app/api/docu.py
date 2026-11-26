@@ -14,6 +14,7 @@ from ..models import Channel, Character, Episode, EpisodeStat, Topic, session
 from ..pipeline.docu import topics as topics_mod
 from ..pipeline.docu.runner import ACTIVE, docu_runner, ep_dict, ep_dir, ep_update
 from ..pipeline.docu.scheduler import _upload_blocking, kinds, slots
+from ..pipeline import speech
 from ..providers import ollama, tts, yt
 
 router = APIRouter(prefix="/api/docu", tags=["documentary"])
@@ -30,6 +31,7 @@ class CharacterIn(BaseModel):
     look_prompt: str = ""
     avatar: str = ""
     voice_id: str = ""
+    voice_settings: str = ""
     language: str = "tr"
 
 
@@ -124,7 +126,12 @@ async def preview_voice(cid: int, body: PreviewIn) -> dict:
     out = paths.media / "previews" / f"char_{cid}_{uuid.uuid4().hex[:6]}.mp3"
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        await tts.synthesize(text[:400], out, c.language, c.voice_id or None, boot.dry_run)
+        try:
+            vs = json.loads(c.voice_settings) if c.voice_settings else None
+        except json.JSONDecodeError:
+            vs = None
+        await tts.synthesize(speech.spoken(text[:400], c.language, keep_tags=tts.uses_tags()), out, c.language,
+                             c.voice_id or None, boot.dry_run, vs)
     except Exception as e:
         raise HTTPException(502, f"Ses önizleme başarısız: {e}") from e
     return {"url": paths.url(out)}

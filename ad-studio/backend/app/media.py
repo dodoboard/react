@@ -66,7 +66,7 @@ def encoder_args(enc: str, quality: str = "final") -> list[str]:
 
 
 _FONT_CANDIDATES = [
-    "Montserrat-ExtraBold.ttf", "Montserrat-Black.ttf", "Poppins-ExtraBold.ttf", "Inter-ExtraBold.ttf",
+    "Montserrat-ExtraBold.ttf", "Montserrat-Variable.ttf", "Montserrat-Black.ttf", "Poppins-ExtraBold.ttf", "Inter-ExtraBold.ttf",
     "C:/Windows/Fonts/seguibl.ttf", "C:/Windows/Fonts/ariblk.ttf", "C:/Windows/Fonts/arialbd.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -79,7 +79,7 @@ def bold_font() -> str | None:
         p = Path(c) if Path(c).is_absolute() else paths.fonts / c
         if p.exists():
             return str(p)
-    found = sorted(paths.fonts.glob("*.ttf")) + sorted(paths.fonts.glob("*.otf"))
+    found = sorted(paths.fonts.glob("*.ttf")) + sorted(paths.fonts.glob("*.otf"))  # e.g. Inter-Variable
     return str(found[0]) if found else None
 
 

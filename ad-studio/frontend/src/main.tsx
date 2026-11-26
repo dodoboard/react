@@ -17,6 +17,7 @@ import Characters from "./pages/Characters";
 import CampaignDetail from "./pages/CampaignDetail";
 import Campaigns from "./pages/Campaigns";
 import Dashboard from "./pages/Dashboard";
+import Doctor from "./pages/Doctor";
 import Library from "./pages/Library";
 import Products from "./pages/Products";
 import Queue from "./pages/Queue";
@@ -46,6 +47,7 @@ function App() {
         <Route path="/channels" element={<Channels />} />
         <Route path="/channels/:id" element={<ChannelDetail />} />
         <Route path="/characters" element={<Characters />} />
+        <Route path="/doctor" element={<Doctor />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

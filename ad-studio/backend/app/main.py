@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import autopilot, brands, campaigns, docu, products, revenue, system, youtube
+from .api import autopilot, brands, campaigns, doctor, docu, products, revenue, system, youtube
 from .config import ROOT, boot, config, paths
 from .events import broker
 from .models import Video, init_db, session
@@ -82,7 +82,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AdForge", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
-for r in (system.router, products.router, campaigns.router, revenue.router, youtube.router, autopilot.router, brands.router, docu.router):
+for r in (system.router, products.router, campaigns.router, revenue.router, youtube.router, autopilot.router, brands.router, docu.router, doctor.router):
     app.include_router(r)
 app.mount("/media", StaticFiles(directory=paths.media), name="media")
 

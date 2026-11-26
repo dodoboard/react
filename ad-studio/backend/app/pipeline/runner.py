@@ -14,7 +14,7 @@ from ..config import boot, config, paths
 from ..events import broker
 from ..models import ACTIVE, Campaign, CampaignProduct, Product, Video, VideoStatus, now, session
 from ..providers import comfy, ollama, tts
-from . import brandkit, graphics, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
+from . import brandkit, graphics, luts, speech, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
 from .compose import Effects, Overlay, Segment, compose
 from .gpu import gpu_lock
 
@@ -238,14 +238,18 @@ class Runner:
         v, c, _ = load(vid)
         cfg = config.get()
         sc = script_mod.AdScript.model_validate_json(v.script_json)
-        text = " ".join([sc.hook, *(s.voiceover for s in sc.scenes), sc.cta])
+        parts = [sc.hook, *(s.voiceover for s in sc.scenes), sc.cta]
+        prov, model = tts.provider_model()
+        spoken = [speech.spoken(p, c.language, keep_tags=tts.uses_tags()) for p in parts]
+        text = speech.join_with_breaks(spoken, None, model, prov)
         await self._progress(vid, "voice", 0.2, "Seslendirme")
         out = paths.video_dir(vid)
         voice_id = c.voice_id or brandkit.resolve(c).voice_id or None
         res = await tts.synthesize(text, out / "voice.mp3", c.language, voice_id, boot.dry_run)
+        words = speech.remap(speech.clean_words(res.words), parts, [speech.strip_tags(x) for x in spoken])
         (out / "words.json").write_text(json.dumps(
-            {"duration": res.duration, "words": [w.__dict__ for w in res.words]}, ensure_ascii=False))
-        tl_mod.build(sc, res.words, res.duration, cfg.end_card_seconds).save(out / "timeline.json")
+            {"duration": res.duration, "words": [w.__dict__ for w in words]}, ensure_ascii=False))
+        tl_mod.build(sc, words, res.duration, cfg.end_card_seconds).save(out / "timeline.json")
         update(vid, tts_chars=v.tts_chars + (0 if boot.dry_run else len(text)))
 
     async def _visuals(self, vid: int) -> None:
@@ -332,7 +336,7 @@ class Runner:
         ass = subtitles.build(words, headlines, out / "subs.ass", style.font_name, style.highlight_hex, c.language,
                               cfg.caption_style, words[hook_end - 1].end + 0.01 if 0 < hook_end <= len(words) else 0.0)
         fx = Effects(punch=cfg.hook_punch, progress_color=style.highlight_hex if cfg.progress_bar else None,
-                     sfx_volume=cfg.sfx_volume, overlays=overlays)
+                     sfx_volume=cfg.sfx_volume, overlays=overlays, lut=luts.lut_path(cfg.lut_ads))
         await self._progress(vid, "compose", 0.15, "FFmpeg montaj")
         final = out / f"adforge_{vid}.mp4"
         await compose(segs, out / "voice.mp3", ass, final, out, pick_music(c.music), cfg.music_volume, fx)

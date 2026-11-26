@@ -15,7 +15,7 @@ from ...events import broker
 from ...media import probe_duration, run_ffmpeg
 from ...models import Channel, Character, Episode, Topic, now, session
 from ...providers import comfy, ollama, tts
-from .. import graphics, product as product_mod, subtitles, visuals
+from .. import graphics, luts, product as product_mod, realism, speech, subtitles, visuals
 from ..compose import VERTICAL, WIDE, Effects, Segment, compose
 from ..gpu import gpu_lock
 from ..runner import pick_music
@@ -28,7 +28,7 @@ LLM = {"outline", "script", "gate"}
 PROGRESS = {"outline": (0, 4), "script": (4, 14), "gate": (14, 17), "voice": (17, 25), "visuals": (25, 80),
             "compose": (80, 92), "thumbnail": (92, 95), "shorts": (95, 100)}
 ACTIVE = {"queued", *STAGES}
-GAP = 0.6  # seconds of breath between chapters
+GAP = 0.9  # seconds of breath between chapters
 WIDE_IMG = (1344, 768)
 S2V_WIDE = (832, 480)
 I2V_WIDE = (1280, 704)
@@ -228,18 +228,25 @@ class DocuRunner:
         wd = ep_dir(eid)
         voice_id = (ch.voice_id if ch else "") or None
         lang = (ch.language if ch else "") or c.language
+        try:
+            vsettings = json.loads(ch.voice_settings) if ch and ch.voice_settings else None
+        except json.JSONDecodeError:
+            vsettings = None
+        prov, model = tts.provider_model()
         items: list[Item] = []
         all_words: list[tts.Word] = []
         parts: list[Path] = []
         offset = 0.0
         for ci, chap in enumerate(sc.chapters):
             await self._progress(eid, "voice", ci / len(sc.chapters), f"Seslendirme {ci + 1}/{len(sc.chapters)}")
-            text = " ".join(s.text for s in chap.segments)
-            res = await tts.synthesize(text, wd / f"ch_{ci}.mp3", lang, voice_id, boot.dry_run)
+            originals = [s.text for s in chap.segments]
+            spoken = [speech.spoken(t, lang, keep_tags=tts.uses_tags()) for t in originals]
+            text = speech.join_with_breaks(spoken, [s.kind for s in chap.segments], model, prov)
+            res = await tts.synthesize(text, wd / f"ch_{ci}.mp3", lang, voice_id, boot.dry_run, vsettings)
             parts.append(res.audio)
-            counts = [len(s.text.split()) for s in chap.segments]
+            counts = [len(speech.strip_tags(t).split()) for t in originals]
             total = sum(counts)
-            words = res.words
+            words = speech.remap(speech.clean_words(res.words), originals, [speech.strip_tags(x) for x in spoken])
 
             def t_at(idx: int) -> float:
                 if not words:
@@ -283,30 +290,46 @@ class DocuRunner:
         cfg = config.get()
         media: list[dict] = []
         n = len(items)
+        animate = pick_animated(items, cfg.doc_i2v_ratio)
+        refs: dict[tuple[int, str], Path] = {}  # (chapter, "a"|"b") → identity-locked presenter frame
+
+        async def ref_for(ci: int, cam: str, prog) -> Path:
+            if (ci, cam) not in refs:
+                place = next((x.visual_prompt for x in items if x.chapter == ci and x.kind == "narration" and x.visual_prompt), "")
+                setting = f"in a location related to: {place[:160]}" if place else "in a quiet study with old books and maps"
+                framing = "seen in a medium shot, seated," if cam == "a" else "seen in a close-up, slightly off-center,"
+                refs[(ci, cam)] = await visuals.character_ref(avatar, setting, framing, wd / f"ref_{ci}_{cam}.png",
+                                                              boot.dry_run, prog, S2V_WIDE)
+            return refs[(ci, cam)]
+
         for k, it in enumerate(items):
             async def prog(f: float, _k=k) -> None:
                 await self._progress(eid, "visuals", (_k + f) / n, f"Görsel {_k + 1}/{n}")
 
             span = it.end - it.start
             if it.kind == "presenter" and avatar:
-                chunks = max(1, int(span // PRESENTER_CHUNK) + (1 if span % PRESENTER_CHUNK > 0.5 else 0))
+                chunk = max(3.0, cfg.presenter_chunk)
+                chunks = max(1, int(span // chunk) + (1 if span % chunk > 0.5 else 0))
                 step = span / chunks
                 for j in range(chunks):
                     a, b = it.start + j * step, it.start + (j + 1) * step
+                    cam = "a" if j % 2 == 0 else "b"  # A/B camera cut on long pieces to camera
+                    ref = await ref_for(it.chapter, cam, prog)
                     f = await visuals._presenter(k * 10 + j, avatar, (a, b), wd / "voice.mp3", wd, boot.dry_run, prog,
-                                                 size=S2V_WIDE, prompt=f"{look}, talking to the camera, documentary interview, "
-                                                                       "soft key light, shallow depth of field")
-                    media.append({"file": f.name, "start": a, "end": b, "kind": "presenter"})
+                                                 size=S2V_WIDE, prompt=f"{look}, talking to the camera, documentary interview",
+                                                 ref_frame=ref)
+                    media.append({"file": f.name, "start": a, "end": b, "kind": "presenter", "cam": cam})
                 continue
-            prompt = ", ".join(x for x in (it.visual_prompt, c.visual_style, "16:9 cinematic frame") if x)
+            prompt = ", ".join(x for x in (it.visual_prompt, c.visual_style) if x)
+            shot = realism.doc_shot_type(it.visual_prompt)
             if boot.dry_run:
                 img = graphics.stub_scene(wd / f"shot_{k}.png", k, it.lower_third or f"Sahne {k + 1}", "", WIDE_IMG)
                 await prog(1)
             else:
-                img = await visuals._t2i(prompt, wd, f"shot_{k}", prog, "text, caption, watermark", WIDE_IMG)
-            chapter_open = it.seg == 0 or (it.seg == 1 and items[k - 1].kind == "presenter")
-            if not boot.dry_run and cfg.i2v_mode != "off" and (cfg.i2v_mode == "all" or chapter_open):
-                img = await visuals._i2v(img, it.visual_prompt, span, k, wd, prog, I2V_WIDE)
+                img = await visuals._t2i(prompt, wd, f"shot_{k}", prog, "text, caption, watermark", WIDE_IMG, shot, "doc")
+            legacy = cfg.i2v_mode != "off" and (cfg.i2v_mode == "all" or it.seg == 0)
+            if not boot.dry_run and (k in animate or legacy):
+                img = await visuals._i2v(img, it.visual_prompt, span, k, wd, prog, I2V_WIDE, shot, "doc")
             media.append({"file": img.name, "start": it.start, "end": it.end, "kind": "narration"})
         (wd / "media.json").write_text(json.dumps(media))
 
@@ -340,7 +363,8 @@ class DocuRunner:
         srt = subtitles.to_srt(words, wd / "captions.srt")
         await self._progress(eid, "compose", 0.1, "Belgesel montajı (16:9)")
         final = wd / f"episode_{eid}.mp4"
-        fx = Effects(punch=False, progress_color=None, sfx_volume=0, xfade=0.5, film=True, canvas=WIDE)
+        fx = Effects(punch=False, progress_color=None, sfx_volume=0, xfade=0.5, film=True, canvas=WIDE,
+                     lut=luts.lut_path(config.get().lut_doc), loudness=-16.0)
         await compose(segs, wd / "voice.mp3", ass, final, wd, pick_music(c.music), 0.12, fx)
         chapter_txt = chapter_lines(chapters)
         desc = "\n\n".join(x for x in [sc.description, chapter_txt, " ".join("#" + t.replace(" ", "") for t in sc.tags[:5]),
@@ -381,7 +405,8 @@ class DocuRunner:
         ass = subtitles.build(sw, [(0.05, min(3.0, b - a), sc.title)], wd / "short.ass", config.get().subtitle_font,
                               "#EAB308", c.language, "bold_yellow", hook_end)
         out = wd / f"short_{eid}.mp4"
-        fx = Effects(punch=True, progress_color="#EAB308", sfx_volume=0.2, canvas=VERTICAL)
+        fx = Effects(punch=True, progress_color="#EAB308", sfx_volume=0.2, canvas=VERTICAL,
+                     lut=luts.lut_path(config.get().lut_doc), loudness=-14.0)
         await compose(segs, voice, ass, out, wd, pick_music(c.music), 0.12, fx)
         ep_update(eid, video_path=str(out), duration=round(b - a + 2.0, 2))
         return out
@@ -400,7 +425,13 @@ class DocuRunner:
             bg = await visuals._t2i(f"{sc.thumbnail_prompt}, dramatic lighting, high contrast, cinematic, 16:9", wd,
                                     "thumb_bg", prog, "text, letters, watermark", WIDE_IMG)
         person = None
-        if av := avatar_path(ch):
+        av = avatar_path(ch)
+        if av and config.get().identity_lock and not boot.dry_run:
+            async def _p(_: float) -> None: ...
+            bg = await visuals.character_ref(av, f"inside this scene: {sc.thumbnail_prompt}", "on the right third of the frame, "
+                                             "with an intrigued expression,", wd / "thumb_bg_person.png", False, _p, (672, 384))
+            av = None  # already in the picture
+        if av:
             try:
                 person = product_mod.make_cutout(av, wd / "presenter_cut.png")
             except Exception as ex:
@@ -431,6 +462,17 @@ class DocuRunner:
         sc = ds.DocScript.model_validate_json(e.script_json)
         ep_update(child.id, status="ready", progress=100, step="Yayına hazır (uzun bölüm sonrası)",
                   description=f"{sc.description}\n\n#Shorts #belgesel", quality_score=e.quality_score)
+
+
+def pick_animated(items: list[Item], ratio: float) -> set[int]:
+    """Which b-roll shots get real motion (i2v): chapter openers first, then the longest shots."""
+    narr = [k for k, it in enumerate(items) if it.kind == "narration"]
+    budget = round(len(narr) * max(0.0, min(1.0, ratio)))
+    if budget <= 0:
+        return set()
+    openers = [k for k in narr if k == 0 or items[k - 1].chapter != items[k].chapter or items[k - 1].kind == "presenter"]
+    rest = sorted((k for k in narr if k not in openers), key=lambda k: items[k].end - items[k].start, reverse=True)
+    return set((openers + rest)[:budget])
 
 
 class Window(BaseModel):

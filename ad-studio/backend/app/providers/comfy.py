@@ -24,7 +24,7 @@ def load_workflow(name: str) -> dict:
     p = WORKFLOWS_DIR / f"{name}.json"
     if not p.exists():
         raise ComfyError(f"Workflow bulunamadı: {p.name}")
-    return json.loads(p.read_text())
+    return {k: v for k, v in json.loads(p.read_text()).items() if not k.startswith("_")}
 
 
 def fill(graph: dict, values: dict[str, Any]) -> dict:

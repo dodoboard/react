@@ -37,8 +37,18 @@ class RuntimeConfig(BaseModel):
     i2v_mode: Literal["off", "hook", "all"] = "off"
     product_mode: Literal["composite", "kontext", "off"] = "composite"
     kontext_workflow: str = "kontext_product"
-    avatar_workflow: str = "wan22_s2v"
+    avatar_workflow: str = "infinitetalk"
     image_steps: int = 20
+    realism: bool = True  # cinematography recipes + realism negatives
+    realism_lora: str = ""  # e.g. a Flux realism LoRA in models/loras; enables flux_realism_lora
+    realism_lora_strength: float = 0.7
+    upscale_model: str = "4x-UltraSharp.pth"
+    i2v_fast_lora: str = ""  # Lightning/LightX2V LoRA for wan22_i2v_fast (4-8 steps)
+    doc_i2v_ratio: float = 0.25  # share of documentary b-roll shots animated with Wan i2v
+    presenter_chunk: float = 8.0  # seconds per talking-head generation
+    identity_lock: bool = True  # Flux Kontext reference frames of the presenter per chapter
+    lut_ads: str = "neutral"
+    lut_doc: str = "cool_doc"
     negative_prompt: str = "text, watermark, logo, blurry, deformed hands, extra fingers, low quality, jpeg artifacts"
     style_suffix: str = "cinematic commercial product photography, soft studio lighting, shallow depth of field, ultra detailed, 9:16 vertical composition"
     # Voice
@@ -50,7 +60,7 @@ class RuntimeConfig(BaseModel):
     whisper_model: str = "small"
     # Composition
     video_encoder: Literal["auto", "h264_nvenc", "libx264"] = "auto"
-    subtitle_font: str = "Montserrat ExtraBold"
+    subtitle_font: str = "Montserrat"
     subtitle_highlight: str = "#FFD400"
     caption_style: Literal["bold_yellow", "white_box", "gradient_pop"] = "bold_yellow"
     music_volume: float = 0.18

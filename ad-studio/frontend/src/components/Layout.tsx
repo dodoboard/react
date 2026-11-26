@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BadgeDollarSign, Bot, Building2, CalendarDays, Tv, UserRound, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
+  BadgeDollarSign, Bot, Building2, CalendarDays, Stethoscope, Tv, UserRound, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
   Settings, Sparkles, Sun, X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -24,6 +24,7 @@ const NAV: { to: string; label: string; icon: typeof Tv; accent?: boolean; secti
   { to: "/channels", label: "YouTube Kanalları", icon: Tv, section: "Belgesel" },
   { to: "/characters", label: "Karakterler", icon: UserRound },
   { to: "/revenue", label: "Gelir & ROI", icon: BadgeDollarSign },
+  { to: "/doctor", label: "Sistem Durumu", icon: Stethoscope, section: "Sistem" },
   { to: "/settings", label: "Ayarlar", icon: Settings },
 ];
 

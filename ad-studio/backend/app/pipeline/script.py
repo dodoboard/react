@@ -75,7 +75,8 @@ Kurallar:
 - Ürünün yalnızca verilen gerçek özelliklerini kullan. Uydurma iddia, sahte indirim, sağlık/finans vaadi YOK.
 - Her sahneye bir shot türü ver. Sahnelerin en az yarısı ürünü göstermeli (product_hero / product_in_use / detail); \
 ilk iki sahneden biri product_hero olmalı.
-- visual_prompt'lar İngilizce. Ürün sahnelerinde ürünün KONUMUNU ve ORTAMINI tarif et (yüzey, ışık, eller, mekân); \
+- visual_prompt'lar İngilizce, fotoğrafçının çekim notu gibi: özne + eylem + mekân + ışık kaynağı + kamera açısı; \
+"beautiful, 8k, masterpiece" gibi boş sıfatlar yok. Ürün sahnelerinde ürünün KONUMUNU ve ORTAMINI tarif et (yüzey, ışık, eller, mekân); \
 ürünün kendisini yeniden tasarlama. Metin/yazı/logo içermesin; dikey kadraj.
 - Sahneler görsel olarak çeşitli olsun (yakın plan, kullanım anı, yaşam tarzı, detay).
 - CTA platforma uygun olsun (ör. "Link profilde", "Sepete ekle").
@@ -169,6 +170,8 @@ def build_prompt(products: list[Product], campaign: Campaign, angle: str, avoid_
         lines.append(f"Hook TAM OLARAK şu olmalı (değiştirme): {fixed_hook}")
     if campaign.angle_notes:
         lines.append(f"Ek notlar: {campaign.angle_notes}")
+    if rule := tag_rule():
+        lines.append(rule)
     if winners:
         lines.append("Geçmişte en çok kazandıran hook'lar (stil referansı, kopyalama):\n" + "\n".join(f"- {w}" for w in winners))
     if avoid_hooks:
@@ -314,3 +317,11 @@ def full_caption(s: AdScript, style: BrandStyle | None = None) -> str:
     if cfg.ai_label:
         parts.append("Bu video yapay zekâ ile üretilmiştir.")
     return "\n\n".join(p for p in parts if p)
+
+
+def tag_rule() -> str:
+    from ..providers.tts import uses_tags
+    if not uses_tags():
+        return ""
+    return ("Seslendirme metinlerine ÇOK seyrek (en fazla 2-3 kez) ElevenLabs ses etiketi ekleyebilirsin: "
+            "[curious], [thoughtful], [whispers], [excited], [sighs]. Etiketi cümlenin başına koy, ekran yazılarına koyma.")

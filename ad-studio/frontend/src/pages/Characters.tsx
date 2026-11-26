@@ -28,6 +28,29 @@ export function useVoicePreview() {
   return { toggle, playing, loading: m.isPending ? m.variables : null };
 }
 
+const VS_DEFAULT = { stability: 0.4, similarity_boost: 0.8, style: 0.35, speed: 0.97, exaggeration: 0.6, cfg_weight: 0.4 };
+
+function VoiceSettings({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  let v = VS_DEFAULT;
+  try { v = { ...VS_DEFAULT, ...(value ? JSON.parse(value) : {}) }; } catch { /* keep defaults */ }
+  const set = (k: keyof typeof VS_DEFAULT, x: number) => onChange(JSON.stringify({ ...v, [k]: x }));
+  const rows: [keyof typeof VS_DEFAULT, string, number, number, string][] = [
+    ["stability", "Stabilite", 0, 1, "Düşük = daha duygulu, değişken"], ["style", "Stil vurgusu", 0, 1, "Anlatıcı karakteri belirginleşir"],
+    ["speed", "Hız", 0.7, 1.2, "Belgesel için 0.92-1.0"], ["exaggeration", "Duygu (lokal ses)", 0.2, 1.2, "Chatterbox"],
+  ];
+  return (
+    <div className="rounded-xl border border-line bg-elev/30 p-3 sm:col-span-2">
+      <span className="label">Ses karakteri</span>
+      <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+        {rows.map(([k, label, min, max, hint]) => (
+          <label key={k} className="text-xs"><div className="flex justify-between"><span>{label}</span><span className="font-mono text-muted">{v[k].toFixed(2)}</span></div>
+            <input type="range" min={min} max={max} step={0.01} value={v[k]} onChange={(e) => set(k, +e.target.value)} className="w-full accent-violet-500" title={hint} /></label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CharacterForm({ initial, open, onClose }: { initial: Partial<Character> | null; open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const [c, setC] = useState<Partial<Character>>(BLANK);
@@ -81,6 +104,7 @@ function CharacterForm({ initial, open, onClose }: { initial: Partial<Character>
             <Field label="İmza kapanış"><input className="input" value={c.closing_line} onChange={set("closing_line")} /></Field>
             <Field label="İmza ifadeler"><input className="input" value={c.catchphrases} onChange={set("catchphrases")} /></Field>
             <Field label="Ses"><select className="input" value={c.voice_id} onChange={set("voice_id")}><option value="">Varsayılan</option>{voices?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
+            <VoiceSettings value={c.voice_settings ?? ""} onChange={(v) => setC({ ...c, voice_settings: v })} />
             <Field label="Görünüm (EN, tutarlılık için)" className="sm:col-span-2" hint="Persona görseli ve S2V/kapak üretiminde kullanılır."><textarea className="input text-xs" value={c.look_prompt} onChange={set("look_prompt")} /></Field>
           </div>
         </div>

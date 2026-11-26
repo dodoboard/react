@@ -211,6 +211,7 @@ class Character(SQLModel, table=True):
     look_prompt: str = ""
     avatar: str = ""  # file in media/avatars
     voice_id: str = ""
+    voice_settings: str = ""  # json: stability, similarity_boost, style, speed | exaggeration, cfg_weight
     language: str = "tr"
     created_at: NaiveDatetime = Field(default_factory=now)
 

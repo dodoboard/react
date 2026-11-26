@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import paths
-from ..media import ass_fonts_dir, encoder_args, filter_path, run_ffmpeg, video_encoder
+from ..media import ass_fonts_dir, encoder_args, filter_path, probe, run_ffmpeg, video_encoder
 
 @dataclass(frozen=True)
 class Canvas:
@@ -18,11 +18,14 @@ class Canvas:
 VERTICAL = Canvas()
 WIDE = Canvas(1920, 1080, 30)
 W, H, FPS = VERTICAL.w, VERTICAL.h, VERTICAL.fps
+# smoothstep easing: S = p*p*(3-2p), p = on/n — camera accelerates and settles like a real dolly/gimbal
+_S = "((on/{n})*(on/{n})*(3-2*(on/{n})))"
 MOTIONS = [
-    ("min(zoom+0.0009,1.18)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),            # zoom in
-    ("if(eq(on,0),1.18,max(zoom-0.0009,1.0))", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),  # zoom out
-    ("1.15", "(iw-iw/zoom)*on/{n}", "ih/2-(ih/zoom/2)"),                            # pan
-    ("min(zoom+0.0007,1.15)", "iw/2-(iw/zoom/2)", "(ih-ih/zoom)*(1-on/{n})"),       # zoom + tilt
+    (f"1+0.14*{_S}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),                       # push in
+    (f"1.14-0.14*{_S}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),                    # pull out
+    ("1.12", f"(iw-iw/zoom)*(0.15+0.7*{_S})", "ih/2-(ih/zoom/2)"),                  # lateral pan
+    (f"1.04+0.1*{_S}", "iw/2-(iw/zoom/2)", f"(ih-ih/zoom)*(0.7-0.4*{_S})"),         # push + tilt up
+    ("1.12", f"(iw-iw/zoom)*(0.85-0.7*{_S})", "(ih-ih/zoom)*0.45"),                 # reverse pan
 ]
 # hook: fast punch-in from 1.35 over ~8 frames, then slow push
 PUNCH = ("if(lt(on,8),1.35-0.035*on,min(1.07+0.0006*(on-8),1.2))", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)")
@@ -53,16 +56,31 @@ class Effects:
     xfade: float = 0.0  # crossfade seconds between segments (documentary)
     film: bool = False  # vignette + grain
     canvas: Canvas = VERTICAL
+    lut: Path | None = None  # 3D LUT colour grade
+    loudness: float = -14.0  # LUFS target (-14 social, -16 long-form)
+    master_voice: bool = True  # de-ess, compress, presence EQ, room tone
+    smooth_fps: bool = True  # motion-interpolate low-fps clips (S2V 16 fps) to canvas fps
+
+
+async def _fps(p: Path) -> float:
+    try:
+        st = next(s for s in (await probe(p)).get("streams", []) if s.get("codec_type") == "video")
+        num, den = st.get("avg_frame_rate", "0/1").split("/")
+        return float(num) / float(den or 1)
+    except (StopIteration, ValueError, ZeroDivisionError):
+        return 0.0
 
 
 async def render_segment(seg: Segment, out: Path, idx: int, enc: str, punch: bool, cv: Canvas = VERTICAL,
-                         fade_in: bool = True) -> Path:
+                         fade_in: bool = True, smooth_fps: bool = False) -> Path:
     W, H, FPS = cv.w, cv.h, cv.fps
     frames = max(2, round(seg.duration * FPS))
     fade = "fade=t=in:st=0:d=0.14:color=white" if punch else ("fade=t=in:st=0:d=0.1" if fade_in else "null")
     if seg.media.suffix.lower() in VIDEO_EXT:
         zoom = "scale=w='iw*(1+0.3*max(0,1-t/0.25))':h=-2:eval=frame," if punch else ""
-        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{zoom}crop={W}:{H},fps={FPS},setsar=1,"
+        src_fps = await _fps(seg.media) if smooth_fps else 0.0
+        rate = (f"minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:vsbmc=1" if 0 < src_fps < 24 else f"fps={FPS}")
+        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{zoom}crop={W}:{H},{rate},setsar=1,"
               f"trim=end_frame={frames},{fade}")
         args = ["-stream_loop", "-1", "-i", str(seg.media), "-vf", vf, "-frames:v", str(frames), "-an"]
     else:
@@ -130,7 +148,8 @@ async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, wo
     xf = fx.xfade if len(segments) > 1 else 0.0
     # with crossfades every clip (except the last) is rendered xf longer so cut points stay on the audio timeline
     clips = [await render_segment(Segment(s.media, s.duration + (xf if i < len(segments) - 1 else 0)),
-                                  work / f"seg_{i}.mp4", i, enc, fx.punch and i == 0, cv, fade_in=not xf or i == 0)
+                                  work / f"seg_{i}.mp4", i, enc, fx.punch and i == 0, cv, fade_in=not xf or i == 0,
+                                  smooth_fps=fx.smooth_fps)
              for i, s in enumerate(segments)]
     lst = work / "concat.txt"
     joined = work / "joined.mp4"
@@ -162,7 +181,9 @@ async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, wo
         ov_idx.append(idx)
         idx += 1
 
-    v = [f"[0:v]subtitles=filename='{filter_path(ass)}':fontsdir='{ass_fonts_dir()}'[v0]" if ass else "[0:v]null[v0]"]
+    grade = f"lut3d=file='{filter_path(fx.lut)}'," if fx.lut and fx.lut.exists() else ""  # grade before text
+    subs = f"subtitles=filename='{filter_path(ass)}':fontsdir='{ass_fonts_dir()}'" if ass else "null"
+    v = [f"[0:v]{grade}{subs}[v0]"]
     cur = "v0"
     if fx.film:
         v.append(f"[{cur}]vignette=PI/5,noise=alls=5:allf=t[vf]")
@@ -175,8 +196,13 @@ async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, wo
         v.append(f"[{cur}][ov{k}]overlay=x={o.x}:y={o.y}:enable='between(t,{o.start:.2f},{o.end:.2f})'[vo{k}]")
         cur = f"vo{k}"
 
-    a = [f"[1:a]aresample=48000,apad{',asplit=2[voice][sc]' if music else '[voice]'}"]
+    chain = ("highpass=f=80,deesser=i=0.35,acompressor=threshold=-20dB:ratio=2.5:attack=8:release=160:makeup=1.5,"
+             "equalizer=f=3200:t=q:w=1.4:g=1.8," if fx.master_voice else "")
+    a = [f"[1:a]aresample=48000,{chain}apad{',asplit=2[voice][sc]' if music else '[voice]'}"]
     mix = ["[voice]"]
+    if fx.master_voice:  # never true digital silence between lines — it reads as synthetic
+        a.append(f"anoisesrc=d={total + 1:.2f}:c=pink:r=48000:a=0.0013,lowpass=f=6000[room]")
+        mix.append("[room]")
     if music:
         a.append(f"[{mi}:a]aresample=48000,volume={music_volume}[mu]")
         a.append("[mu][sc]sidechaincompress=threshold=0.03:ratio=10:attack=15:release=350[duck]")
@@ -188,7 +214,7 @@ async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, wo
             a.append(f"[w{k}]adelay={ms}|{ms}[wd{k}]")
             mix.append(f"[wd{k}]")
     a.append(f"{''.join(mix)}amix=inputs={len(mix)}:duration=first:normalize=0,"
-             f"afade=t=out:st={max(0, total - 0.6):.2f}:d=0.6,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+             f"afade=t=out:st={max(0, total - 0.6):.2f}:d=0.6,loudnorm=I={fx.loudness:g}:TP=-1.5:LRA=11[a]")
 
     await run_ffmpeg([*inputs, "-filter_complex", ";".join(v + a), "-map", f"[{cur}]", "-map", "[a]",
                       *encoder_args(enc, "final"), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",

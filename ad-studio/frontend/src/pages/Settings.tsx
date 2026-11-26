@@ -153,6 +153,23 @@ export default function SettingsPage() {
               <Toggle checked={c.price_badge} onChange={(v) => setC({ ...c, price_badge: v })} label="Fiyat rozeti" />
               <Toggle checked={c.hook_tournament} onChange={(v) => setC({ ...c, hook_tournament: v })} label="Hook turnuvası" desc={`Slot başı ${c.hooks_per_slot} aday, LLM jürisi seçer`} />
             </div>
+            <div className="rounded-2xl border border-line bg-elev/30 p-4">
+              <div className="mb-3 text-sm font-semibold">Gerçekçilik</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2"><Toggle checked={c.realism} onChange={(v) => setC({ ...c, realism: v })} label="Sinematografi reçeteleri" desc="Kamera/lens/ışık/film dokusu dili + 'AI görünümü' negatifleri" /></div>
+                <div className="sm:col-span-2"><Toggle checked={c.identity_lock} onChange={(v) => setC({ ...c, identity_lock: v })} label="Karakter kimlik kilidi (Flux Kontext)" desc="Sunucu her bölümde aynı yüzle, mekâna uygun orta/yakın planlarla (A/B kamera)" /></div>
+                <Field label="Realism LoRA (models/loras)" hint="Boşsa LoRA'sız; doluysa flux_realism_lora kullanılır"><input className="input font-mono text-xs" value={c.realism_lora} onChange={set("realism_lora")} placeholder="flux_realism_lora.safetensors" /></Field>
+                <Field label={`LoRA gücü: ${c.realism_lora_strength}`}><input type="range" min={0} max={1.2} step={0.05} value={c.realism_lora_strength} onChange={set("realism_lora_strength")} className="w-full accent-violet-500" /></Field>
+                <Field label="Upscale modeli"><input className="input font-mono text-xs" value={c.upscale_model} onChange={set("upscale_model")} /></Field>
+                <Field label="Hızlı i2v LoRA (Lightning)" hint="Doluysa 6 adımlık hızlı workflow"><input className="input font-mono text-xs" value={c.i2v_fast_lora} onChange={set("i2v_fast_lora")} /></Field>
+                <Field label={`Belgesel hareketli çekim oranı: %${Math.round(c.doc_i2v_ratio * 100)}`} hint="Bölüm açılışları önce, sonra en uzun çekimler"><input type="range" min={0} max={1} step={0.05} value={c.doc_i2v_ratio} onChange={set("doc_i2v_ratio")} className="w-full accent-violet-500" /></Field>
+                <Field label={`Sunucu klip parçası: ${c.presenter_chunk} sn`} hint="16 GB VRAM'de 6-10 sn"><input type="range" min={4} max={20} step={1} value={c.presenter_chunk} onChange={set("presenter_chunk")} className="w-full accent-violet-500" /></Field>
+                <Field label="Konuşan sunucu motoru"><select className="input" value={c.avatar_workflow} onChange={set("avatar_workflow")}>{wfs?.filter((w) => /talk|s2v/.test(w)).map((w) => <option key={w}>{w}</option>)}</select></Field>
+                <Field label="Renk (reklam / belgesel)"><div className="flex gap-2">
+                  {(["lut_ads", "lut_doc"] as const).map((k) => <select key={k} className="input" value={c[k]} onChange={set(k)}>{["none", "neutral", "warm_film", "cool_doc", "teal_orange"].map((x) => <option key={x}>{x}</option>)}</select>)}
+                </div></Field>
+              </div>
+            </div>
             <Field label="Varsayılan i2v modu"><select className="input" value={c.i2v_mode} onChange={set("i2v_mode")}><option value="off">Kapalı</option><option value="hook">Sadece hook sahnesi</option><option value="all">Tüm sahneler</option></select></Field>
           </div>
         </Section>

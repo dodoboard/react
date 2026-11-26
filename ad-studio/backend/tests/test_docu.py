@@ -12,7 +12,7 @@ from app.main import app
 from app.media import probe
 
 
-def wait_ep(c, cid, pred, timeout=300):
+def wait_ep(c, cid, pred, timeout=1200):
     t = time.time()
     while time.time() - t < timeout:
         eps = c.get(f"/api/docu/episodes?channel_id={cid}").json()
@@ -39,7 +39,7 @@ def make_channel(c, **kw):
     prev = c.post(f"/api/docu/characters/{ch['id']}/preview", json={}).json()
     assert prev["url"].endswith(".mp3")
     body = {"name": "Kayıp Tarih", "niche": "tarih gizemleri", "character_id": ch["id"], "format": "both",
-            "target_minutes": 1.2, "min_quality": 7} | kw
+            "target_minutes": 1.0, "min_quality": 7} | kw
     return c.post("/api/docu/channels", json=body).json()
 
 

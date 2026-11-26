@@ -19,6 +19,22 @@ Hedef donanım: RTX 5080 (16 GB VRAM) · Core Ultra 9 275HX · 32 GB RAM · Wind
 - **Yayın:** takvim (sürükle-bırak, en iyi saatlere otomatik dağıtım), yayın paketi (.zip: mp4 + caption + thumbnail), YouTube Shorts API ile direkt/zamanlanmış yükleme.
 - **Uyum:** açıklamaya otomatik `#reklam #işbirliği` ve "yapay zekâ ile üretildi" etiketi; YouTube yüklemelerinde `containsSyntheticMedia: true`.
 
+## v5 — Gerçekçilik paketi
+| Alan | Ne değişti |
+|---|---|
+| **Görüntü** | Çekim türüne göre sinematografi reçeteleri (kamera, lens, ışık, film dokusu) + "AI görünümü" negatifleri; `flux_realism` workflow'u (düşük guidance, hires-fix 2. geçiş, 4x-UltraSharp upscale), opsiyonel realism LoRA; reklam/belgesel için 3D LUT renk düzenleme (`neutral`, `warm_film`, `cool_doc`, `teal_orange`). |
+| **Karakter kimliği** | Flux Kontext ile sunucunun her bölümde **aynı yüzle**, bölümün mekânında orta/yakın planları (A/B kamera kesmesi); kapak görselinde karakter sahnenin içinde. Opsiyonel PuLID workflow'u. |
+| **Ses** | Türkçe metin normalizasyonu (1453 → "bin dört yüz elli üç", MÖ, %, km, XV. yüzyıl…), altyazıda orijinal yazım korunur; segmentler arası doğal duraklar (`<break>`); ElevenLabs v3 ses etiketleri ([curious], [whispers]…) — altyazıdan otomatik ayıklanır; karakter başına ses ayarı (stabilite, stil, hız); mastering zinciri (de-esser, kompresör, varlık EQ, oda tonu) ve hedef loudness (reklam −14, belgesel −16 LUFS). |
+| **Hareket** | InfiniteTalk (ComfyUI yerleşik, 25 fps) varsayılan konuşan sunucu motoru; doğal mimik/jest prompt'ları; düşük fps klipler `minterpolate` ile 30 fps; Ken Burns yumuşak hızlanma/yavaşlama (5 farklı hareket); belgesel b-roll'unun ayarlanabilir oranı Wan i2v ile gerçek harekete (bölüm açılışları öncelikli); Lightning LoRA ile 6 adımlık hızlı i2v. |
+| **Kurulum** | `scripts/setup_models.py` (devam ettirilebilir model + font indirme, `--only`, `--files`, `--dry-run`); **Sistem Durumu** sayfası: FFmpeg filtreleri/NVENC, font, disk, Ollama + JSON şema testi, ComfyUI'da her workflow'un node ve model dosyası kontrolü (eksik node paketi ve indirme komutu ile), ElevenLabs kota/model, YouTube; **Gerçek testi çalıştır** (LLM → görsel → ses → montaj, süreleriyle). |
+
+**İlk kurulum (önerilen sıra)**
+```powershell
+python scripts\setup_models.py --comfy D:\ComfyUI_windows_portable\ComfyUI --only flux,upscaler,kontext,infinitetalk,wan-i2v,fonts
+# uygulamayı başlat → Sistem Durumu → hepsi yeşil olana kadar düzelt → "Gerçek testi çalıştır"
+```
+`models.json` içindeki bazı yollar ("verify") upstream'de değişebilir; Sistem Durumu, ComfyUI'ın gördüğü dosya adlarıyla workflow'u karşılaştırıp neyin eksik olduğunu söyler. Hugging Face'te giriş gerektiren dosyalar için `HF_TOKEN` ortam değişkenini ayarlayın.
+
 ## v4 — Belgesel Kanalı (tam otomatik YouTube)
 Kendi YouTube kanal(lar)ında, sabit bir **sunucu karakterin** anlattığı belgesel bölümleri ve Shorts — konu seçiminden yayına kadar otomatik.
 

@@ -39,7 +39,16 @@ def ink(c: RGB) -> RGB:
 
 def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     f = FONT_OVERRIDE.get() or bold_font()
-    return ImageFont.truetype(f, size) if f else ImageFont.load_default(size=size)
+    if not f:
+        return ImageFont.load_default(size=size)
+    ft = ImageFont.truetype(f, size)
+    for weight in (b"ExtraBold", b"Bold", "ExtraBold", "Bold"):  # variable fonts default to Regular/Thin
+        try:
+            ft.set_variation_by_name(weight)
+            break
+        except Exception:
+            continue
+    return ft
 
 
 def gradient(size: tuple[int, int], a: tuple[int, int, int], b: tuple[int, int, int]) -> Image.Image:

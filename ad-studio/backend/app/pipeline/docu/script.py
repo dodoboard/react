@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from ...models import Channel, Character, Topic
 from ...providers import ollama
-from ..script import LANG
+from ..script import LANG, tag_rule
 
 WPM = 140  # spoken words per minute (documentary pace)
 SHORT_WORDS = 125  # ~50 s
@@ -81,8 +81,9 @@ yerler, zaman çizelgesi. Kurallar:
 - Kesin bilinmeyen şeyleri temkinli dille anlat ("kayıtlara göre", "tarihçiler tartışıyor"). Uydurma alıntı, rakam, kaynak YOK.
 - Gerçek yaşayan kişiler hakkında olumsuz iddia yok. Sağlık/finans tavsiyesi yok.
 - Sunucu karakter kendi kişiliğiyle konuşur ama konunun önüne geçmez.
-- visual_prompt'lar İngilizce, belgesel kamera dilinde (establishing shot, macro detail, archival style photo, aerial...);
-  metin/yazı/logo içermez; tarihsel dönemi ve mekânı belirt.
+- visual_prompt'lar İngilizce, belgesel görüntü yönetmeninin çekim listesi gibi: çekim türü (establishing wide / close-up
+  detail / aerial / archival photograph / reconstruction) + özne + dönem + mekân + ışık + hava. Boş sıfat ("epic,
+  stunning, 8k") yok; metin/yazı/logo yok. Aynı bölümde çekim türlerini çeşitlendir.
 - Yalnızca istenen JSON şemasında yanıt ver."""
 
 
@@ -140,6 +141,8 @@ async def write_chapter(channel: Channel, ch: Character | None, o: Outline, idx:
         rules.append(f"Önceki bölümün son cümlesi (devamlılık): {last}")
     if notes:
         rules.append(f"Editör notları (mutlaka uygula): {notes}")
+    if tr := tag_rule():
+        rules.append(tr)
     prompt = persona_block(ch) + "\nDil: " + LANG.get(channel.language, channel.language) + "\n" + "\n".join(rules)
     c = await ollama.chat_json(SYSTEM, prompt, Chapter)
     c.title = plan.title
