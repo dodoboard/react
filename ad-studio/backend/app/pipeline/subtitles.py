@@ -14,7 +14,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{font},92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,7,4,2,80,80,620,1
+{cap_style}
 Style: Head,{font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,260,1
 
 [Events]
@@ -47,6 +47,14 @@ def upper(s: str, lang: str) -> str:
     return s.upper()
 
 
+# caption presets: (style line, highlight override tag, inactive word tag)
+STYLES = {
+    "bold_yellow": "Style: Cap,{font},92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,7,4,2,80,80,1000,1",
+    "white_box": "Style: Cap,{font},80,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,14,0,2,90,90,1010,1",
+    "gradient_pop": "Style: Cap,{font},96,&H00FFFFFF,&H00FFFFFF,&H00F65C8B,&H96000000,-1,0,0,0,100,100,0,0,1,9,0,2,80,80,1000,1",
+}
+
+
 def chunk(words: list[Word], max_words: int = 3, max_chars: int = 18, max_gap: float = 0.45) -> list[list[Word]]:
     out: list[list[Word]] = []
     cur: list[Word] = []
@@ -62,17 +70,21 @@ def chunk(words: list[Word], max_words: int = 3, max_chars: int = 18, max_gap: f
 
 
 def build(words: list[Word], headlines: list[tuple[float, float, str]], out: Path, font: str, highlight: str,
-          lang: str = "tr") -> Path:
+          lang: str = "tr", style: str = "bold_yellow", hook_until: float = 0.0) -> Path:
     hl = "&H" + ass_color(highlight)[4:] + "&"
-    lines = [HEADER.format(font=font)]
-    for grp in chunk(words):
+    if style == "white_box":
+        hl = "&H" + ass_color("#7C3AED")[4:] + "&"
+    lines = [HEADER.format(font=font, cap_style=STYLES.get(style, STYLES["bold_yellow"]).format(font=font))]
+    hook_words = [w for w in words if w.start < hook_until]
+    groups = chunk(hook_words, max_words=2, max_chars=14) + chunk(words[len(hook_words):])
+    for grp in groups:
         for i, w in enumerate(grp):
             start = w.start
             end = grp[i + 1].start if i + 1 < len(grp) else max(w.end, w.start + 0.25)
             parts = []
             for j, x in enumerate(grp):
                 t = esc(upper(x.text, lang))
-                parts.append(f"{{\\c{hl}\\fscx112\\fscy112}}{t}{{\\c&H00FFFFFF&\\fscx100\\fscy100}}" if j == i else t)
+                parts.append(f"{{\\c{hl}\\fscx112\\fscy112}}{t}{{\\r}}" if j == i else t)
             pop = "{\\fad(40,0)}" if i == 0 else ""
             lines.append(f"Dialogue: 1,{ts(start)},{ts(end)},Cap,,0,0,0,,{pop}{' '.join(parts)}")
     for s, e, text in headlines:

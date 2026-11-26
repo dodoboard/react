@@ -40,8 +40,10 @@ def test_ass_turkish_upper_and_highlight(tmp_path):
 def test_normalize_trims():
     s = AdScript(hook="h", scenes=[Scene(voiceover="v", visual_prompt="p")] * 6, cta="c", caption="x",
                  hashtags=["#a b", "c"], title="t")
-    n = normalize(s, 4)
+    from app.models import Campaign
+    n = normalize(s, Campaign(product_id=1, name="x", scenes=4))
     assert len(n.scenes) == 4 and n.hashtags == ["ab", "c"]
+    assert any(sc.shot in ("product_hero", "product_in_use", "detail") for sc in n.scenes[:2])
 
 
 @pytest.mark.asyncio

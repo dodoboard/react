@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrainCircuit, CheckCircle2, Coins, Image, KeyRound, Mic, Music2, Palette, RefreshCw, Trash2, Upload, XCircle, Youtube } from "lucide-react";
+import { BrainCircuit, CheckCircle2, Coins, Image, KeyRound, Mic, Music2, Palette, RefreshCw, Sparkles, Trash2, Upload, XCircle, Youtube } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button, Field, PageHeader, Segmented, Toggle } from "@/components/ui";
@@ -51,6 +51,7 @@ export default function SettingsPage() {
   });
   const up = (fn: (f: File) => Promise<unknown>, keys: string[]) => (f: File) =>
     fn(f).then(() => { toast.success(`${f.name} yüklendi`); keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] })); }).catch((e: Error) => toast.error(e.message));
+  const ytSync = useMutation({ mutationFn: api.ytSync, onSuccess: (r) => { toast.success(`${r.rows} gün/video satırı güncellendi`); qc.invalidateQueries({ queryKey: ["summary"] }); }, onError: (e: Error) => toast.error(e.message) });
   const ytConnect = useMutation({ mutationFn: api.ytConnect, onSuccess: () => { toast.success("YouTube bağlandı"); qc.invalidateQueries({ queryKey: ["yt"] }); }, onError: (e: Error) => toast.error(e.message) });
 
   if (!c) return null;
@@ -133,6 +134,29 @@ export default function SettingsPage() {
           </div>
         </Section>
 
+        <Section icon={<Sparkles className="h-5 w-5" />} title="Kalite & Öğrenme" desc="Ürün sadakati, viral montaj efektleri ve hook turnuvası."
+          status={h && <Status ok={h.dry_run || !!h.rembg} text={h.rembg ? "BiRefNet hazır" : "rembg yok — basit kesim"} />}>
+          <div className="space-y-4">
+            <div>
+              <span className="label">Ürün sahneleri</span>
+              <Segmented value={c.product_mode} onChange={(v) => setC({ ...c, product_mode: v })} options={[{ id: "composite", label: "Birebir kompozit" }, { id: "kontext", label: "Flux Kontext" }, { id: "off", label: "Kapalı" }]} />
+              <p className="mt-1.5 text-xs text-muted">{c.product_mode === "composite" ? "AI arka plan + gerçek ürün fotoğrafı, gölge ve yansıma ile. Ürün piksel-birebir korunur." : c.product_mode === "kontext" ? "Flux Kontext ürünü sahneye yerleştirir — daha doğal ışık, küçük detaylar değişebilir." : "Ürün yalnızca kapanış kartında."}</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Altyazı stili"><select className="input" value={c.caption_style} onChange={set("caption_style")}>
+                <option value="bold_yellow">Kalın + sarı vurgu</option><option value="white_box">Beyaz kutu</option><option value="gradient_pop">Mor kontur</option></select></Field>
+              <Field label={`Geçiş sesi (whoosh): ${Math.round(c.sfx_volume * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={c.sfx_volume} onChange={set("sfx_volume")} className="w-full accent-violet-500" /></Field>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Toggle checked={c.hook_punch} onChange={(v) => setC({ ...c, hook_punch: v })} label="Hook punch-in + flaş" />
+              <Toggle checked={c.progress_bar} onChange={(v) => setC({ ...c, progress_bar: v })} label="İlerleme çubuğu" />
+              <Toggle checked={c.price_badge} onChange={(v) => setC({ ...c, price_badge: v })} label="Fiyat rozeti" />
+              <Toggle checked={c.hook_tournament} onChange={(v) => setC({ ...c, hook_tournament: v })} label="Hook turnuvası" desc={`Slot başı ${c.hooks_per_slot} aday, LLM jürisi seçer`} />
+            </div>
+            <Field label="Varsayılan i2v modu"><select className="input" value={c.i2v_mode} onChange={set("i2v_mode")}><option value="off">Kapalı</option><option value="hook">Sadece hook sahnesi</option><option value="all">Tüm sahneler</option></select></Field>
+          </div>
+        </Section>
+
         <Section icon={<Music2 className="h-5 w-5" />} title="Müzik kütüphanesi" desc="Telifsiz fon müzikleri — konuşma sırasında otomatik kısılır (ducking).">
           <div className="space-y-2">
             {music?.map((m) => (
@@ -165,7 +189,8 @@ export default function SettingsPage() {
             </ol>
             <div className="flex flex-wrap gap-2">
               <Upload1 accept=".json" label="client_secret.json" onFile={up(api.ytSecret, ["yt"])} />
-              <Button size="sm" variant="primary" disabled={!yt?.has_secret} loading={ytConnect.isPending} onClick={() => ytConnect.mutate()}>Bağlan</Button>
+              <Button size="sm" variant="primary" disabled={!yt?.has_secret} loading={ytConnect.isPending} onClick={() => ytConnect.mutate()}>{yt?.connected && !yt.analytics ? "Analitik için yeniden bağlan" : "Bağlan"}</Button>
+              <Button size="sm" disabled={!yt?.analytics} loading={ytSync.isPending} icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => ytSync.mutate()}>İstatistikleri çek</Button>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Gizlilik"><select className="input" value={c.youtube_privacy} onChange={set("youtube_privacy")}><option value="private">Özel</option><option value="unlisted">Liste dışı</option><option value="public">Herkese açık</option></select></Field>

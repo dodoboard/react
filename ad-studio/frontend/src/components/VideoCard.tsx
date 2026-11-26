@@ -54,6 +54,8 @@ export function VideoCard({ v, onOpen }: { v: Video; onOpen: () => void }) {
         <p className="line-clamp-2 text-[13px] font-medium leading-snug">{v.hook || "—"}</p>
         <div className="flex flex-wrap items-center gap-1">
           <Pill>{ANGLES[v.angle] ?? v.angle}</Pill>
+          {v.hook_score != null && <Pill className={cn(v.hook_score >= 8 ? "text-emerald-500" : v.hook_score >= 6 ? "text-amber-500" : "text-rose-400")}>★ {v.hook_score.toFixed(1)}</Pill>}
+          {v.views != null && <Pill>{v.views.toLocaleString("tr-TR")} izl.</Pill>}
           {v.published_at && <Pill className="border-emerald-500/30 text-emerald-500">Yayında</Pill>}
           {v.scheduled_at && !v.published_at && <Pill className="border-sky-500/30 text-sky-500">Planlı</Pill>}
         </div>
@@ -133,7 +135,7 @@ export function VideoModal({ v, onClose }: { v: Video | null; onClose: () => voi
               <div className="label">Hook</div>
               <p className="font-display text-xl font-bold leading-snug">{v.hook}</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                <Pill>{ANGLES[v.angle] ?? v.angle}</Pill><Pill>Varyant {v.ab_label}</Pill><Pill>subid: <span className="font-mono">{v.subid}</span></Pill>
+                <Pill>{ANGLES[v.angle] ?? v.angle}</Pill><Pill>Varyant {v.ab_label}</Pill>{v.hook_score != null && <Pill>Hook skoru ★ {v.hook_score.toFixed(1)}</Pill>}<Pill>subid: <span className="font-mono">{v.subid}</span></Pill>
                 {v.duration && <Pill>{v.duration.toFixed(1)} sn</Pill>}
               </div>
             </div>

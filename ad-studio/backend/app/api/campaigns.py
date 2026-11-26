@@ -11,8 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..config import paths
-from ..models import ACTIVE, Campaign, Product, RevenueEntry, Video, VideoStatus, session
-from ..pipeline import script as script_mod
+from ..models import ACTIVE, Campaign, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
+from ..pipeline import insights, script as script_mod
 from ..pipeline.runner import STAGES, load, new_subid, runner, tracking_url, update, video_dict
 
 router = APIRouter(prefix="/api", tags=["campaigns"])
@@ -30,6 +30,9 @@ class CampaignIn(BaseModel):
     variants: int = Field(3, ge=1, le=20)
     scenes: int = Field(4, ge=2, le=8)
     use_i2v: bool = False
+    i2v_mode: str = "off"
+    format: str = "broll"
+    avatar: str = ""
     music: str = ""
     target_platform: str = "tiktok"
     angles: list[str] = []
@@ -65,9 +68,17 @@ def get_campaign(cid: int) -> dict:
 
 @router.post("/campaigns")
 def create_campaign(body: CampaignIn) -> dict:
+    return get_campaign(create_campaign_service(body))
+
+
+def create_campaign_service(body: CampaignIn, autopilot_id: int | None = None) -> int:
+    if body.format not in ("broll", "avatar_hook", "avatar_full"):
+        raise HTTPException(422, "Geçersiz format")
+    if body.format != "broll" and not body.avatar:
+        raise HTTPException(422, "Avatar formatı için persona seçin")
     with session() as s:
         p = s.get(Product, body.product_id) or _404()
-        c = Campaign(**body.model_dump(exclude={"angles", "auto_render"}))
+        c = Campaign(**body.model_dump(exclude={"angles", "auto_render"}), autopilot_id=autopilot_id)
         c.name = c.name or f"{p.name} · {datetime.now():%d.%m %H:%M}"
         s.add(c)
         s.commit()
@@ -75,7 +86,7 @@ def create_campaign(body: CampaignIn) -> dict:
         known = {a[0] for a in script_mod.ANGLES}
         chosen = [a for a in body.angles if a in known]
         angles = [chosen[i % len(chosen)] for i in range(body.variants)] if chosen \
-            else [a[0] for a in script_mod.pick_angles(body.variants, c.id)]
+            else insights.choose_angles(body.variants, [a[0] for a in script_mod.ANGLES], seed=c.id)
         ids = []
         for i, a in enumerate(angles):
             v = Video(campaign_id=c.id, variant_index=i, angle=a, subid=new_subid(), ab_label=chr(65 + i % 26),
@@ -85,7 +96,7 @@ def create_campaign(body: CampaignIn) -> dict:
             s.refresh(v)
             ids.append(v.id)
     runner.enqueue(ids, STAGES if body.auto_render else ("script",))
-    return get_campaign(c.id)
+    return c.id
 
 
 @router.post("/campaigns/{cid}/render")
@@ -94,7 +105,7 @@ def render_campaign(cid: int) -> dict:
         ids = [v.id for v in s.query(Video).filter(Video.campaign_id == cid, Video.status.in_(
             [VideoStatus.scripted.value, VideoStatus.failed.value])).all()]
     if ids:
-        runner.enqueue(ids, STAGES)
+        runner.enqueue(ids, STAGES)  # script stage is a no-op for already-scripted videos
     return {"queued": ids}
 
 
@@ -123,7 +134,10 @@ def list_videos(status: str | None = None, campaign_id: int | None = None, limit
         vids = q.order_by(Video.updated_at.desc()).limit(limit).all()
         camps = {c.id: c for c in s.query(Campaign).filter(Campaign.id.in_({v.campaign_id for v in vids})).all()}
         prods = {p.id: p for p in s.query(Product).filter(Product.id.in_({c.product_id for c in camps.values()})).all()}
-        return [video_dict(v) | {"campaign_name": camps[v.campaign_id].name,
+        views: dict[int, int] = {}
+        for st in s.query(VideoStat).filter(VideoStat.video_id.in_([v.id for v in vids])).all():
+            views[st.video_id] = views.get(st.video_id, 0) + st.views
+        return [video_dict(v) | {"views": views.get(v.id),"campaign_name": camps[v.campaign_id].name,
                                  "product_name": prods[camps[v.campaign_id].product_id].name,
                                  "tracking_url": tracking_url(prods[camps[v.campaign_id].product_id], v.subid)}
                 for v in vids]
@@ -145,12 +159,17 @@ def edit_script(vid: int, body: script_mod.AdScript) -> dict:
 
 
 @router.post("/videos/{vid}/render")
-def render_video(vid: int) -> dict:
+def render_video(vid: int, full: bool = False) -> dict:
+    """failed/cancelled → resume from last good stage; done/scripted → regenerate voice, visuals, compose."""
     v, _, _ = load(vid)
     if v.status in ACTIVE:
         raise HTTPException(409, "Zaten işleniyor.")
-    runner.enqueue([vid], STAGES)
-    return {"ok": True}
+    if full or v.status in (VideoStatus.done, VideoStatus.scripted):
+        stages = STAGES[1:] if v.script_json else STAGES
+    else:
+        stages = runner.resume_stages(vid)
+    runner.enqueue([vid], stages)
+    return {"ok": True, "stages": stages}
 
 
 @router.post("/videos/{vid}/rescript")
@@ -165,7 +184,12 @@ def rescript(vid: int, render: bool = False) -> dict:
 
 @router.post("/videos/{vid}/revoice")
 def revoice(vid: int) -> dict:
-    runner.enqueue([vid], ("voice", "compose"))
+    v, c, _ = load(vid)
+    if v.status in ACTIVE or not v.script_json:
+        raise HTTPException(409, "Video işleniyor veya senaryosu yok.")
+    # clip lengths / lip-sync depend on the voice timeline
+    needs_visuals = c.format != "broll" or c.i2v_mode != "off" or c.use_i2v
+    runner.enqueue([vid], ("voice", "visuals", "compose") if needs_visuals else ("voice", "compose"))
     return {"ok": True}
 
 
@@ -189,6 +213,9 @@ class VideoPatch(BaseModel):
 @router.patch("/videos/{vid}")
 def patch_video(vid: int, body: VideoPatch) -> dict:
     kw = body.model_dump(exclude_none=True, exclude={"clear_schedule"})
+    if body.publish_url is not None:
+        from .youtube import yt_id_from_url
+        kw["yt_id"] = yt_id_from_url(body.publish_url)
     if body.clear_schedule:
         kw["scheduled_at"] = None
     return video_dict(update(vid, **kw))

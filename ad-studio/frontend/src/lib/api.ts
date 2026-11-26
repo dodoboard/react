@@ -4,10 +4,13 @@ export type VideoStatus =
 export interface Scene { voiceover: string; visual_prompt: string; on_screen_text: string }
 export interface AdScript { hook: string; scenes: Scene[]; cta: string; caption: string; hashtags: string[]; title: string }
 
+export type I2V = "off" | "hook" | "all";
+export type Format = "broll" | "avatar_hook" | "avatar_full";
+
 export interface Product {
   id: number; name: string; description: string; features: string; price: number | null; currency: string;
   affiliate_url: string; platform: string; commission_rate: number | null; image_path: string | null;
-  image_url: string | null; created_at: string;
+  image_url: string | null; cutout_url: string | null; active: boolean; created_at: string;
 }
 
 export interface Video {
@@ -15,19 +18,20 @@ export interface Video {
   caption: string; status: VideoStatus; step: string; progress: number; error: string; video_url: string | null;
   thumb_url: string | null; duration: number | null; tts_chars: number; render_seconds: number; subid: string;
   ab_label: string; favorite: boolean; platform: string; scheduled_at: string | null; published_at: string | null;
-  publish_url: string; created_at: string; updated_at: string;
-  campaign_name?: string; product_name?: string; tracking_url?: string;
+  publish_url: string; created_at: string; updated_at: string; hook_score: number | null; yt_id: string;
+  stage_done: string; views?: number | null; campaign_name?: string; product_name?: string; tracking_url?: string;
 }
 
 export interface Campaign {
   id: number; product_id: number; name: string; language: string; tone: string; audience: string; angle_notes: string;
   visual_style: string; voice_id: string; variants: number; scenes: number; use_i2v: boolean; music: string;
+  i2v_mode: I2V; format: Format; avatar: string; autopilot_id: number | null;
   target_platform: string; created_at: string; product: { id: number; name: string; image_url: string | null } | null;
   counts: Record<VideoStatus, number>; total: number; revenue: number; thumb_url: string | null; videos?: Video[];
 }
 
 export interface Health {
-  dry_run: boolean; encoder: string; queue: { running: boolean; pending_jobs: number; current: number[] };
+  dry_run: boolean; encoder: string; rembg?: boolean; queue: { running: boolean; pending_jobs: number; current: number[] };
   ollama: { ok: boolean; error?: string; models?: number; model_ready?: boolean; demo?: boolean };
   comfy: { ok: boolean; error?: string; gpu?: string; vram_total?: number; vram_free?: number; demo?: boolean };
   tts: { ok: boolean; error?: string; provider?: string; used?: number; limit?: number; tier?: string; demo?: boolean };
@@ -35,7 +39,10 @@ export interface Health {
 
 export interface Config {
   ollama_url: string; ollama_model: string; ollama_temperature: number; comfy_url: string; image_workflow: string;
-  video_workflow: string; use_i2v: boolean; image_steps: number; negative_prompt: string; style_suffix: string;
+  video_workflow: string; use_i2v: boolean; i2v_mode: I2V; product_mode: "composite" | "kontext" | "off";
+  kontext_workflow: string; avatar_workflow: string; caption_style: "bold_yellow" | "white_box" | "gradient_pop";
+  sfx_volume: number; progress_bar: boolean; hook_punch: boolean; price_badge: boolean; hook_tournament: boolean;
+  hooks_per_slot: number; image_steps: number; negative_prompt: string; style_suffix: string;
   tts_provider: "elevenlabs" | "chatterbox"; elevenlabs_api_key: string; elevenlabs_voice_id: string; elevenlabs_model: string;
   chatterbox_voice: string; whisper_model: string; video_encoder: "auto" | "h264_nvenc" | "libx264"; subtitle_font: string;
   subtitle_highlight: string; music_volume: number; end_card_seconds: number; brand_name: string; cta_default: string;
@@ -51,13 +58,22 @@ export interface Revenue {
 export interface Summary {
   currency: string;
   kpi: { month_revenue: number; total_revenue: number; total_cost: number; roi: number | null; videos_done: number;
-    videos_active: number; published: number; scheduled: number; clicks: number; conversions: number };
-  series: { day: string; revenue: number; cost: number; videos: number }[];
-  top_videos: { id: number; hook: string; label: string; angle: string; thumb: string | null; revenue: number; clicks: number; conversions: number; views: number }[];
+    videos_active: number; published: number; scheduled: number; clicks: number; conversions: number;
+    views: number; avg_retention: number | null; rpm: number | null };
+  series: { day: string; revenue: number; cost: number; videos: number; views: number }[];
+  hook_retention: { id: number; hook: string; retention: number; score: number | null }[];
+  top_videos: { id: number; hook: string; label: string; angle: string; thumb: string | null; retention: number | null; revenue: number; clicks: number; conversions: number; views: number }[];
   angles: { angle: string; avg: number; videos: number }[];
   platforms: { platform: string; revenue: number }[];
   campaigns: { id: number; name: string; product: string; videos: number; revenue: number; cost: number; roi: number | null }[];
 }
+
+export interface Rule {
+  id: number; name: string; enabled: boolean; product_ids: number[]; videos_per_day: number; run_hour: number;
+  platform: string; language: string; format: Format; avatar: string; i2v_mode: I2V; auto_schedule: boolean;
+  last_run: string | null; campaigns: number; videos: number;
+}
+export interface Avatar { name: string; url: string }
 
 export class ApiError extends Error {}
 
@@ -123,7 +139,17 @@ export const api = {
   importRevenue: (f: File) => req<{ added: number; matched: number }>("POST", "/api/revenue/import", file(f)),
   summary: (days = 30) => req<Summary>("GET", `/api/analytics/summary?days=${days}`),
 
-  ytStatus: () => req<{ installed: boolean; has_secret: boolean; connected: boolean }>("GET", "/api/youtube/status"),
+  ytStatus: () => req<{ installed: boolean; has_secret: boolean; connected: boolean; analytics: boolean }>("GET", "/api/youtube/status"),
+  ytSync: () => req<{ rows: number }>("POST", "/api/youtube/analytics/sync"),
+  cutout: (id: number) => req<Product>("POST", `/api/products/${id}/cutout`),
+  avatars: () => req<Avatar[]>("GET", "/api/avatars"),
+  uploadAvatar: (f: File) => req<Avatar>("POST", "/api/avatars", file(f)),
+  generateAvatar: (description: string) => req<Avatar>("POST", "/api/avatars/generate", { description }),
+  deleteAvatar: (n: string) => req("DELETE", `/api/avatars/${encodeURIComponent(n)}`),
+  rules: () => req<Rule[]>("GET", "/api/autopilot"),
+  saveRule: (r: Partial<Rule>) => r.id ? req<Rule>("PUT", `/api/autopilot/${r.id}`, r) : req<Rule>("POST", "/api/autopilot", r),
+  deleteRule: (id: number) => req("DELETE", `/api/autopilot/${id}`),
+  runRule: (id: number) => req<{ campaigns: number[] }>("POST", `/api/autopilot/${id}/run`),
   ytConnect: () => req("POST", "/api/youtube/connect"),
   ytSecret: (f: File) => req("POST", "/api/youtube/secret", file(f)),
   ytUpload: (id: number) => req<{ url: string }>("POST", `/api/youtube/upload/${id}`),

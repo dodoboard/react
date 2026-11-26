@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..config import config
-from ..models import Campaign, Product, RevenueEntry, Video, VideoStatus, session
+from ..models import Campaign, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
 
 router = APIRouter(prefix="/api", tags=["revenue"])
 
@@ -136,8 +136,16 @@ def summary(days: int = 30) -> dict:
         revs = s.query(RevenueEntry).all()
         camps = {c.id: c for c in s.query(Campaign).all()}
         prods = {p.id: p for p in s.query(Product).all()}
+        stats = s.query(VideoStat).all()
 
-    series = {start + timedelta(days=i): {"revenue": 0.0, "cost": 0.0, "videos": 0} for i in range(days)}
+    series = {start + timedelta(days=i): {"revenue": 0.0, "cost": 0.0, "videos": 0, "views": 0} for i in range(days)}
+    vstats: dict[int, dict] = defaultdict(lambda: {"views": 0, "ret_w": 0.0})
+    for st in stats:
+        if st.day in series:
+            series[st.day]["views"] += st.views
+        vs = vstats[st.video_id]
+        vs["views"] += st.views
+        vs["ret_w"] += st.avg_view_pct * st.views
     for r in revs:
         if r.day in series:
             series[r.day]["revenue"] += r.amount
@@ -162,6 +170,12 @@ def summary(days: int = 30) -> dict:
         by_platform[r.platform or "diğer"] += r.amount
 
     vmap = {v.id: v for v in vids}
+    for vid, vs in vstats.items():
+        by_video[vid]["views"] = max(by_video[vid]["views"], vs["views"]) if vid in by_video else vs["views"]
+    retention = {vid: round(vs["ret_w"] / vs["views"], 1) for vid, vs in vstats.items() if vs["views"]}
+    total_views = sum(vs["views"] for vs in vstats.values())
+    hook_ret = sorted(({"id": vid, "hook": vmap[vid].hook, "retention": r, "score": vmap[vid].hook_score}
+                       for vid, r in retention.items() if vid in vmap), key=lambda x: -x["retention"])[:8]
     top = sorted(by_video.items(), key=lambda kv: kv[1]["revenue"], reverse=True)[:8]
     angle_rev: dict[str, list[float]] = defaultdict(list)
     for vid, b in by_video.items():
@@ -190,11 +204,16 @@ def summary(days: int = 30) -> dict:
             "published": sum(bool(v.published_at) for v in vids),
             "scheduled": sum(bool(v.scheduled_at and not v.published_at) for v in vids),
             "clicks": sum(r.clicks for r in revs), "conversions": sum(r.conversions for r in revs),
+            "views": total_views,
+            "avg_retention": round(sum(vs["ret_w"] for vs in vstats.values()) / total_views, 1) if total_views else None,
+            "rpm": round(total_rev / total_views * 1000, 2) if total_views else None,
         },
+        "hook_retention": hook_ret,
         "series": [{"day": d.isoformat(), **{k: round(x, 2) if isinstance(x, float) else x for k, x in val.items()}}
                    for d, val in series.items()],
         "top_videos": [{"id": vid, "hook": vmap[vid].hook, "label": vmap[vid].ab_label, "angle": vmap[vid].angle,
-                        "thumb": vmap[vid].thumb_path and f"/media/renders/{vid}/thumb.jpg", **b}
+                        "thumb": vmap[vid].thumb_path and f"/media/renders/{vid}/thumb.jpg",
+                        "retention": retention.get(vid), **b}
                        for vid, b in top if vid in vmap],
         "angles": sorted([{"angle": a, "avg": round(sum(x) / len(x), 2), "videos": len(x)} for a, x in angle_rev.items()],
                          key=lambda r: r["avg"], reverse=True),

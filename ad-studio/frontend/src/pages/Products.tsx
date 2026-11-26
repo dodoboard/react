@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { ImagePlus, Link2, Package, Pencil, Plus, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Eraser, ImagePlus, Link2, Package, Pencil, Plus, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Button, Empty, Field, Modal, PageHeader, Pill, Skeleton } from "@/components/ui";
+import { Button, Empty, Field, Modal, PageHeader, Pill, Skeleton, Toggle } from "@/components/ui";
 import { api, type Product } from "@/lib/api";
 import { cn, money } from "@/lib/utils";
 
@@ -35,6 +35,11 @@ export function ProductForm({ initial, open, onClose, onSaved }: { initial: Part
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["products"] }); toast.success("Ürün kaydedildi"); onSaved?.(r); onClose(); },
     onError: (e: Error) => toast.error(e.message),
   });
+  const cut = useMutation({
+    mutationFn: () => api.cutout(p.id!),
+    onSuccess: (r) => { setP((x) => ({ ...x, cutout_url: r.cutout_url })); qc.invalidateQueries({ queryKey: ["products"] }); toast.success("Arka plan kaldırıldı"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const pick = (f?: File) => { if (f) { setFile(f); setPreview(URL.createObjectURL(f)); } };
   const set = (k: keyof Product) => (e: { target: { value: string } }) => setP({ ...p, [k]: e.target.value });
 
@@ -63,7 +68,15 @@ export function ProductForm({ initial, open, onClose, onSaved }: { initial: Part
               <div className="text-center text-xs text-muted"><ImagePlus className="mx-auto mb-2 h-7 w-7 opacity-60" />Sürükle bırak<br />veya tıkla</div>}
           </button>
           <input ref={inputRef} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
-          <p className="mt-2 text-xs text-muted">Kapanış kartında gösterilir — ürün sadakati için şeffaf/beyaz arka planlı görsel ideal.</p>
+          <p className="mt-2 text-xs text-muted">Ürün sahnelerine birebir yerleştirilir — beyaz/şeffaf arka planlı net fotoğraf ideal.</p>
+          {p.id && preview && !file && (
+            <div className="mt-3 space-y-2">
+              {p.cutout_url && <div className="grid h-40 place-items-center overflow-hidden rounded-2xl border border-line bg-[conic-gradient(rgb(var(--elev))_25%,transparent_0_50%,rgb(var(--elev))_0_75%,transparent_0)] bg-[length:20px_20px]">
+                <img src={`${p.cutout_url}?v=${cut.submittedAt}`} className="h-full w-full object-contain p-3" /></div>}
+              <Button size="sm" className="w-full" icon={<Eraser className="h-3.5 w-3.5" />} loading={cut.isPending} onClick={() => cut.mutate()}>
+                {p.cutout_url ? "Yeniden kes" : "Arka planı kaldır"}</Button>
+            </div>
+          )}
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Ürün adı" className="sm:col-span-2"><input className="input" value={p.name ?? ""} onChange={set("name")} /></Field>
@@ -78,6 +91,7 @@ export function ProductForm({ initial, open, onClose, onSaved }: { initial: Part
             <input className="input font-mono text-xs" value={p.affiliate_url ?? ""} onChange={set("affiliate_url")} />
           </Field>
           <Field label="Komisyon oranı (%)"><input className="input" type="number" step="0.1" value={p.commission_rate ?? ""} onChange={set("commission_rate")} /></Field>
+          <div className="sm:col-span-2"><Toggle checked={p.active ?? true} onChange={(v) => setP({ ...p, active: v })} label="Otopilot havuzunda" desc="Kapalıysa otopilot bu ürünü seçmez." /></div>
         </div>
       </div>
     </Modal>
@@ -103,7 +117,8 @@ export default function Products() {
           <motion.div key={p.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="card group flex flex-col overflow-hidden">
             <div className="relative aspect-[4/3] bg-gradient-to-br from-elev to-panel">
               {p.image_url ? <img src={p.image_url} className="h-full w-full object-contain p-6 transition duration-500 group-hover:scale-105" /> : <Package className="absolute inset-0 m-auto h-10 w-10 text-muted/40" />}
-              {p.platform && <Pill className="absolute left-3 top-3 bg-panel/90">{p.platform}</Pill>}
+              <div className="absolute left-3 top-3 flex gap-1">{p.platform && <Pill className="bg-panel/90">{p.platform}</Pill>}
+                {p.cutout_url && <Pill className="bg-panel/90 text-emerald-500">Kesildi</Pill>}{!p.active && <Pill className="bg-panel/90">Pasif</Pill>}</div>
               <div className="absolute right-3 top-3 flex gap-1 opacity-0 transition group-hover:opacity-100">
                 <button onClick={() => { setEdit(p); setOpen(true); }} className="rounded-lg bg-panel/90 p-2 text-muted hover:text-fg"><Pencil className="h-3.5 w-3.5" /></button>
                 <button onClick={() => confirm("Ürün silinsin mi?") && del.mutate(p.id)} className="rounded-lg bg-panel/90 p-2 text-muted hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>

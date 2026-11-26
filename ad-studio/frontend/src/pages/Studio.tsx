@@ -4,8 +4,9 @@ import { ArrowLeft, ArrowRight, Check, Clapperboard, Music2, Package, Pause, Pla
 import { useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { FormatPicker, FORMATS, I2VPicker } from "@/components/AvatarPicker";
 import { Button, Field, PageHeader, Pill, Toggle } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, type Format, type I2V } from "@/lib/api";
 import { ANGLES, cn, money, PLATFORMS } from "@/lib/utils";
 import { ProductForm } from "./Products";
 
@@ -39,7 +40,8 @@ export default function Studio() {
   const { data: cfg } = useQuery({ queryKey: ["config"], queryFn: api.config });
   const [f, setF] = useState({
     product_id: Number(params.get("product")) || 0, name: "", language: "tr", tone: "enerjik", audience: "", angle_notes: "",
-    visual_style: STYLES[0].desc, style_id: STYLES[0].id, voice_id: "", variants: 4, scenes: 4, use_i2v: false, music: "",
+    visual_style: STYLES[0].desc, style_id: STYLES[0].id, voice_id: "", variants: 4, scenes: 4, i2v_mode: "off" as I2V,
+    format: "broll" as Format, avatar: "", music: "",
     target_platform: "tiktok", angles: [] as string[], auto_render: true,
   });
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -62,8 +64,9 @@ export default function Studio() {
     setPlaying(id);
   };
 
-  const canNext = step === 0 ? !!f.product_id : true;
-  const perVideoMin = (f.use_i2v ? 2.2 : 0.25) * f.scenes + 0.6;
+  const canNext = step === 0 ? !!f.product_id : step === 2 ? f.format === "broll" || !!f.avatar : true;
+  const perVideoMin = (f.i2v_mode === "all" ? 2.2 * f.scenes : f.i2v_mode === "hook" ? 2.2 : 0) + 0.25 * f.scenes + 0.6
+    + (f.format === "avatar_full" ? 8 * f.scenes : f.format === "avatar_hook" ? 8 : 0);
 
   return (
     <>
@@ -134,8 +137,8 @@ export default function Studio() {
                       ))}
                     </div>
                   </div>
-                  <Toggle checked={f.use_i2v} onChange={(v) => setF({ ...f, use_i2v: v })} label="Hareketli sahneler (Wan 2.2 image-to-video)"
-                    desc="Her sahne 5 sn'lik AI video klibe dönüşür. Çok daha etkileyici, ama RTX 5080'de sahne başı ~1.5-3 dk." />
+                  <FormatPicker format={f.format} avatar={f.avatar} onChange={(format, avatar) => setF({ ...f, format, avatar })} />
+                  <I2VPicker value={f.i2v_mode} onChange={(v) => setF({ ...f, i2v_mode: v })} />
                   <div>
                     <span className="label">Ses ({cfg?.tts_provider === "chatterbox" ? "Lokal Chatterbox" : "ElevenLabs"})</span>
                     <div className="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
@@ -191,7 +194,7 @@ export default function Studio() {
             </div>
             <dl className="space-y-2.5 text-sm">
               {[["Platform", PLATFORMS.find((p) => p.id === f.target_platform)?.label], ["Ton", f.tone], ["Stil", STYLES.find((s) => s.id === f.style_id)?.label],
-                ["Hook'lar", f.angles.length ? f.angles.map((a) => ANGLES[a]).join(", ") : "Otomatik"], ["Hareket", f.use_i2v ? "Wan 2.2 video" : "Ken Burns"]].map(([k, v]) => (
+                ["Hook'lar", f.angles.length ? f.angles.map((a) => ANGLES[a]).join(", ") : "Otomatik"], ["Format", FORMATS.find((x) => x.id === f.format)?.label], ["Hareket", { off: "Ken Burns", hook: "Hook klip", all: "Tüm sahneler klip" }[f.i2v_mode]]].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4"><dt className="text-muted">{k}</dt><dd className="truncate text-right font-medium">{v}</dd></div>
               ))}
             </dl>

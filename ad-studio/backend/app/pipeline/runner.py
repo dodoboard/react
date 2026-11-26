@@ -14,12 +14,12 @@ from ..config import boot, config, paths
 from ..events import broker
 from ..models import ACTIVE, Campaign, Product, Video, VideoStatus, now, session
 from ..providers import comfy, ollama, tts
-from . import graphics, script as script_mod, subtitles, visuals
-from .compose import Segment, compose
+from . import graphics, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
+from .compose import Effects, Overlay, Segment, compose
 
 log = logging.getLogger("adforge.runner")
-STAGES = ("script", "visuals", "voice", "compose")
-PROGRESS = {"script": (0, 10), "visuals": (10, 70), "voice": (70, 80), "compose": (80, 100)}
+STAGES = ("script", "voice", "visuals", "compose")
+PROGRESS = {"script": (0, 10), "voice": (10, 20), "visuals": (20, 85), "compose": (85, 100)}
 STATUS = {"script": VideoStatus.scripting, "visuals": VideoStatus.visuals, "voice": VideoStatus.voice,
           "compose": VideoStatus.composing}
 
@@ -86,11 +86,20 @@ class Runner:
                 v.status, v.error = VideoStatus.failed, "Sunucu yeniden başlatıldı, tekrar deneyin."
                 s.add(v)
             s.commit()
+        self.queue = asyncio.Queue()  # bind to the running loop
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+
+    def resume_stages(self, vid: int) -> tuple[str, ...]:
+        v, _, _ = load(vid)
+        if not v.script_json:
+            return STAGES
+        done = v.stage_done if v.stage_done in STAGES else "script"
+        rest = STAGES[STAGES.index(done) + 1:]
+        return rest or STAGES[1:]
 
     def enqueue(self, video_ids: list[int], stages: tuple[str, ...] = STAGES) -> None:
         for vid in video_ids:
@@ -118,6 +127,8 @@ class Runner:
         alive = list(job.video_ids)
         timers = {vid: 0.0 for vid in alive}
         for stage in job.stages:
+            if stage == "script":
+                await self._tournament(alive)
             for vid in list(alive):
                 v, _, _ = load(vid)
                 if v.status == VideoStatus.cancelled:
@@ -128,6 +139,7 @@ class Runner:
                     lo, _ = PROGRESS[stage]
                     update(vid, status=STATUS[stage], progress=lo)
                     await getattr(self, f"_{stage}")(vid)
+                    update(vid, stage_done=stage)
                 except Cancelled:
                     alive.remove(vid)
                 except Exception as e:
@@ -155,43 +167,76 @@ class Runner:
         update(vid, progress=round(lo + (hi - lo) * min(max(frac, 0), 1), 1), step=step)
 
     # ---------- stages ----------
+    async def _tournament(self, vids: list[int]) -> None:
+        """Pick hooks per campaign: N candidates per slot, LLM-judged, best kept."""
+        if not config.get().hook_tournament:
+            return
+        by_camp: dict[int, list[Video]] = {}
+        for vid in vids:
+            v, c, _ = load(vid)
+            if not v.script_json and not v.hook and v.status != VideoStatus.cancelled:
+                by_camp.setdefault(c.id, []).append(v)
+        for cid, group in by_camp.items():
+            _, c, p = load(group[0].id)
+            for v in group:
+                update(v.id, status=VideoStatus.scripting, step="Hook turnuvası", progress=2)
+            angles = [v.angle for v in group]
+            try:
+                picks = (script_mod.stub_tournament(angles, cid) if boot.dry_run else
+                         await script_mod.tournament(p, c, angles, insights.winning_hooks(5, cid), config.get().hooks_per_slot))
+            except Exception as e:  # tournament is an optimisation; fall back to per-video hooks
+                log.warning("hook tournament failed for campaign %s: %s", cid, e)
+                continue
+            for v, (_, hook, score) in zip(group, picks):
+                update(v.id, hook=hook, hook_score=score)
+
     async def _script(self, vid: int) -> None:
         v, c, p = load(vid)
         if v.script_json:
             return
-        await self._progress(vid, "script", 0.1, "Ollama senaryo yazıyor")
+        await self._progress(vid, "script", 0.2, "Ollama senaryo yazıyor")
         with session() as s:
             others = [x.hook for x in s.query(Video).filter(Video.campaign_id == c.id, Video.id != vid).all() if x.hook]
-        angle_key, angle_desc = next((a for a in script_mod.ANGLES if a[0] == v.angle), script_mod.ANGLES[0])
-        sc = (script_mod.stub(p, c, angle_key, v.variant_index) if boot.dry_run
-              else await script_mod.generate(p, c, angle_desc, others[-6:]))
+        sc = (script_mod.stub(p, c, v.angle, v.variant_index, v.hook) if boot.dry_run
+              else await script_mod.generate(p, c, v.angle, others[-6:], v.hook, insights.winning_hooks(5, c.id)))
         update(vid, script_json=sc.model_dump_json(), hook=sc.hook, caption=script_mod.full_caption(sc),
                progress=PROGRESS["script"][1], step="Senaryo hazır")
 
-    async def _visuals(self, vid: int) -> None:
+    async def _voice(self, vid: int) -> None:
         v, c, _ = load(vid)
+        cfg = config.get()
+        sc = script_mod.AdScript.model_validate_json(v.script_json)
+        text = " ".join([sc.hook, *(s.voiceover for s in sc.scenes), sc.cta])
+        await self._progress(vid, "voice", 0.2, "Seslendirme")
+        out = paths.video_dir(vid)
+        res = await tts.synthesize(text, out / "voice.mp3", c.language, c.voice_id or None, boot.dry_run)
+        (out / "words.json").write_text(json.dumps(
+            {"duration": res.duration, "words": [w.__dict__ for w in res.words]}, ensure_ascii=False))
+        tl_mod.build(sc, res.words, res.duration, cfg.end_card_seconds).save(out / "timeline.json")
+        update(vid, tts_chars=v.tts_chars + (0 if boot.dry_run else len(text)))
+
+    async def _visuals(self, vid: int) -> None:
+        v, c, p = load(vid)
         sc = script_mod.AdScript.model_validate_json(v.script_json)
         out = paths.video_dir(vid)
-        for f in out.glob("scene_*"):
-            f.unlink()
-        for f in out.glob("clip_*"):
-            f.unlink()
+        for pat in ("scene_*", "clip_*", "bg_*", "ref_*", "vo_*"):
+            for f in out.glob(pat):
+                f.unlink()
+        cut = None
+        if config.get().product_mode != "off" and any(s.shot in script_mod.PRODUCT_SHOTS for s in sc.scenes):
+            await self._progress(vid, "visuals", 0.01, "Ürün kesiliyor")
+            try:
+                cut = await product_mod.cutout(p)
+            except Exception as e:  # unusable photo: fall back to generated product shots
+                log.warning("cutout failed for product %s: %s", p.id, e)
         n = len(sc.scenes)
 
         async def prog(f: float) -> None:
             await self._progress(vid, "visuals", f, f"ComfyUI sahne {min(int(f * n) + 1, n)}/{n}")
 
-        await visuals.generate(sc, out, c.visual_style, c.use_i2v or config.get().use_i2v, boot.dry_run, prog)
-
-    async def _voice(self, vid: int) -> None:
-        v, c, _ = load(vid)
-        sc = script_mod.AdScript.model_validate_json(v.script_json)
-        text = " ".join([sc.hook, *(s.voiceover for s in sc.scenes), sc.cta])
-        await self._progress(vid, "voice", 0.2, "Seslendirme")
-        res = await tts.synthesize(text, paths.video_dir(vid) / "voice.mp3", c.language, c.voice_id or None, boot.dry_run)
-        (paths.video_dir(vid) / "words.json").write_text(json.dumps(
-            {"duration": res.duration, "words": [w.__dict__ for w in res.words]}, ensure_ascii=False))
-        update(vid, tts_chars=v.tts_chars + (0 if boot.dry_run else len(text)))
+        media = await visuals.generate(sc, out, c, cut, tl_mod.Timeline.load(out / "timeline.json"),
+                                       out / "voice.mp3", boot.dry_run, prog)
+        (out / "media.json").write_text(json.dumps([m.name for m in media]))
 
     async def _compose(self, vid: int) -> None:
         v, c, p = load(vid)
@@ -200,57 +245,48 @@ class Runner:
         out = paths.video_dir(vid)
         meta = json.loads((out / "words.json").read_text())
         words = [tts.Word(**w) for w in meta["words"]]
-        dur = meta["duration"]
-        media = sorted([*out.glob("clip_*"), *out.glob("scene_*")], key=lambda f: (int(f.stem.split("_")[1]), f.stem[0] != "c"))
-        by_idx: dict[int, Path] = {}
-        for f in media:  # prefer clip over still
-            by_idx.setdefault(int(f.stem.split("_")[1]), f)
-        scene_media = [by_idx[i] for i in sorted(by_idx)]
-        if len(scene_media) < len(sc.scenes):
-            raise RuntimeError("Eksik sahne görseli")
+        tl = tl_mod.Timeline.load(out / "timeline.json")
+        scene_media = [out / n for n in json.loads((out / "media.json").read_text())]
+        if len(scene_media) < len(sc.scenes) or not all(m.exists() for m in scene_media):
+            raise RuntimeError("Eksik sahne görseli — görselleri yeniden üretin")
 
-        # segment boundaries by word index: [hook+s0], s1..s(n-1), cta
-        counts = [len(sc.hook.split()) + len(sc.scenes[0].voiceover.split()),
-                  *(len(s.voiceover.split()) for s in sc.scenes[1:])]
-        total_words = sum(counts) + len(sc.cta.split())
-
-        def t_at(word_idx: int) -> float:
-            if not words:
-                return dur * word_idx / max(total_words, 1)
-            i = word_idx if len(words) == total_words else int(word_idx * len(words) / total_words)
-            return words[min(i, len(words) - 1)].start
-
-        starts, acc = [0.0], 0
-        for cnt in counts:
-            acc += cnt
-            starts.append(t_at(acc))
-        cta_start = starts[-1]
-        total = max(dur + 0.35, cta_start + cfg.end_card_seconds)
-        segs = [Segment(scene_media[i], max(0.6, starts[i + 1] - starts[i])) for i in range(len(sc.scenes))]
+        durs = tl.scene_durations
+        segs = [Segment(scene_media[i], durs[i]) for i in range(len(sc.scenes))]
         price = f"{p.price:,.2f} {p.currency}".replace(",", "X").replace(".", ",").replace("X", ".") if p.price else ""
         product_img = Path(p.image_path) if p.image_path else None
-        still = next((f for f in reversed(scene_media) if f.suffix == ".png"), None) or next(iter(out.glob("scene_*.png")), None)
-        card = graphics.end_card(out / "endcard.png", still, product_img, p.name, price, cfg.cta_default, cfg.brand_name)
-        segs.append(Segment(card, total - sum(s.duration for s in segs)))
+        stills = [f for f in scene_media if f.suffix == ".png"]
+        card = graphics.end_card(out / "endcard.png", stills[-1] if stills else None, product_img, p.name, price,
+                                 cfg.cta_default, cfg.brand_name)
+        segs.append(Segment(card, max(0.6, tl.total - sum(s.duration for s in segs))))
 
         headlines, t = [], 0.0
+        hero_at: tuple[float, float] | None = None
         for i, s in enumerate(segs[:-1]):
             text = sc.scenes[i].on_screen_text
             if i == 0 and len(sc.hook.split()) <= 6:
                 text = sc.hook
             headlines.append((t + 0.05, t + s.duration - 0.05, text))
+            if hero_at is None and sc.scenes[i].shot == "product_hero":
+                hero_at = (t + 0.3, t + s.duration - 0.05)
             t += s.duration
-        ass = subtitles.build(words, headlines, out / "subs.ass", cfg.subtitle_font, cfg.subtitle_highlight, c.language)
+        hook_end = len(sc.hook.split())
+        ass = subtitles.build(words, headlines, out / "subs.ass", cfg.subtitle_font, cfg.subtitle_highlight, c.language,
+                              cfg.caption_style, words[hook_end - 1].end + 0.01 if 0 < hook_end <= len(words) else 0.0)
 
+        overlays = []
+        if cfg.price_badge and price and hero_at:
+            overlays.append(Overlay(graphics.price_badge(out / "badge.png", price, p.platform), *hero_at))
+        fx = Effects(punch=cfg.hook_punch, progress_color=cfg.subtitle_highlight if cfg.progress_bar else None,
+                     sfx_volume=cfg.sfx_volume, overlays=overlays)
         await self._progress(vid, "compose", 0.15, "FFmpeg montaj")
-        music = pick_music(c.music)
         final = out / f"adforge_{vid}.mp4"
-        await compose(segs, out / "voice.mp3", ass, final, out, music, cfg.music_volume)
-        thumb = graphics.thumbnail(out / "thumb.jpg", scene_media[0] if scene_media[0].suffix == ".png" else card, sc.hook)
+        await compose(segs, out / "voice.mp3", ass, final, out, pick_music(c.music), cfg.music_volume, fx)
+        first = scene_media[0] if scene_media[0].suffix == ".png" else (stills[0] if stills else card)
+        thumb = graphics.thumbnail(out / "thumb.jpg", first, sc.hook)
         (out / "caption.txt").write_text(
             f"{sc.title}\n\n{v.caption}\n\n{tracking_url(p, v.subid)}".strip(), encoding="utf-8")
         update(vid, status=VideoStatus.done, progress=100, step="Hazır", video_path=str(final), thumb_path=str(thumb),
-               duration=round(total, 2))
+               duration=round(tl.total, 2))
 
 
 def pick_music(choice: str) -> Path | None:

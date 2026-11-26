@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..config import boot, paths
 from ..models import Campaign, Product, session
+from ..pipeline import product as product_mod
 from ..providers import ollama
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -28,11 +29,13 @@ class ProductIn(BaseModel):
     platform: str = ""
     commission_rate: float | None = None
     image_path: str | None = None
+    active: bool = True
 
 
 def out(p: Product) -> dict:
     d = p.model_dump()
     d["image_url"] = paths.url(p.image_path)
+    d["cutout_url"] = paths.url(p.cutout_path)
     return d
 
 
@@ -56,6 +59,8 @@ def create(body: ProductIn) -> dict:
 def edit(pid: int, body: ProductIn) -> dict:
     with session() as s:
         p = s.get(Product, pid) or _404()
+        if body.image_path != p.image_path:
+            p.cutout_path = None
         for k, v in body.model_dump().items():
             setattr(p, k, v)
         s.add(p)
@@ -85,10 +90,25 @@ async def upload_image(pid: int, file: UploadFile) -> dict:
     with session() as s:
         p = s.get(Product, pid) or _404()
         p.image_path = str(dst)
+        p.cutout_path = None
         s.add(p)
         s.commit()
         s.refresh(p)
         return out(p)
+
+
+@router.post("/{pid}/cutout")
+async def make_cutout(pid: int) -> dict:
+    with session() as s:
+        p = s.get(Product, pid) or _404()
+    if not p.image_path:
+        raise HTTPException(400, "Önce ürün görseli yükleyin")
+    try:
+        await product_mod.cutout(p, force=True)
+    except Exception as e:
+        raise HTTPException(422, f"Kesim başarısız: {e}") from e
+    with session() as s:
+        return out(s.get(Product, pid))
 
 
 class AutofillIn(BaseModel):

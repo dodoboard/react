@@ -19,6 +19,37 @@ Hedef donanım: RTX 5080 (16 GB VRAM) · Core Ultra 9 275HX · 32 GB RAM · Wind
 - **Yayın:** takvim (sürükle-bırak, en iyi saatlere otomatik dağıtım), yayın paketi (.zip: mp4 + caption + thumbnail), YouTube Shorts API ile direkt/zamanlanmış yükleme.
 - **Uyum:** açıklamaya otomatik `#reklam #işbirliği` ve "yapay zekâ ile üretildi" etiketi; YouTube yüklemelerinde `containsSyntheticMedia: true`.
 
+## v2 — Dönüşüm odaklı özellikler
+| Özellik | Ne yapar | Nerede |
+|---|---|---|
+| **Gerçek ürün sahneleri** | Ürün fotoğrafının arka planı kaldırılır (BiRefNet; yoksa beyaz fon için yerleşik kesim) ve AI arka plana gölge + yansıma ile **piksel-birebir** yerleştirilir. Alternatif: Flux Kontext ile doğal yerleştirme. | Ürünler → "Arka planı kaldır", Ayarlar → Kalite |
+| **Çekim türleri** | LLM her sahneye `product_hero / product_in_use / detail / lifestyle / presenter` atar; sahnelerin ≥%50'si ürün. | otomatik |
+| **Viral montaj** | Hook'ta punch-in + beyaz flaş, kesimlerde whoosh (lokal sentez), üstte ilerleme çubuğu, hero sahnede fiyat rozeti, 3 altyazı stili, hook'ta 2 kelimelik altyazı. | Ayarlar → Kalite |
+| **i2v modu** | Kapalı / sadece hook sahnesi / tümü — hook modu ilk saniyeyi hareketli yapar, maliyeti düşük tutar. Klip uzunluğu konuşma süresine eşit. | Stüdyo, Otopilot |
+| **Hook turnuvası** | Slot başı 3 aday hook → LLM jürisi 0-10 puanlar → en iyisi senaryoya dönüşür. Skor kartlarda ★ olarak görünür. | Ayarlar → Kalite |
+| **Öğrenen açı seçimi** | Hook yaklaşımları Thompson sampling ile seçilir: dönüşüm verisi (CSV), yoksa YouTube izlenme oranı. Kazanan hook'lar prompt'a stil referansı olarak eklenir. | otomatik |
+| **Otopilot** | Her gün belirlenen saatte ürün havuzundan (gelire göre ağırlıklı, %20 keşif) kampanya üretir; bitenleri 12:00/19:00/21:00 slotlarına planlar. | Otopilot |
+| **Konuşan avatar (UGC)** | Wan 2.2 S2V ile kameraya konuşan persona — "Avatar hook" (sadece ilk sahne) veya "Tam UGC". Persona: kendi fotoğrafın ya da Flux ile kurgusal kişi. | Stüdyo → Görsel & Ses |
+| **YouTube Analytics** | Yüklenen Shorts'ların günlük izlenme / ortalama izlenme yüzdesi / beğeni 6 saatte bir çekilir → Dashboard "Hook tutma oranı", RPM. | Ayarlar → YouTube |
+
+Aşama sırası: **senaryo → ses → görsel → montaj** (ses önce: klip ve dudak senkronu süreleri kesinleşir). Hatalı video "Tekrar" ile son başarılı aşamadan devam eder.
+
+### v2 ek modeller
+| Dosya | Klasör | Kullanım |
+|---|---|---|
+| `flux1-dev-kontext_fp8_scaled.safetensors` | `models/diffusion_models` | Ürün modu "Flux Kontext" |
+| `clip_l.safetensors`, `t5xxl_fp8_e4m3fn_scaled.safetensors` | `models/text_encoders` | Kontext |
+| `ae.safetensors` | `models/vae` | Kontext |
+| `wan2.2_s2v_14B_fp8_scaled.safetensors` | `models/diffusion_models` | Avatar (S2V) |
+| `wav2vec2_large_english_fp16.safetensors` | `models/audio_encoders` | Avatar |
+| `wan_2.1_vae.safetensors` | `models/vae` | Avatar |
+
+Kaliteli ürün kesimi için: `backend\.venv\Scripts\pip install -r backend\requirements-product.txt` (rembg + BiRefNet, ilk çalıştırmada model indirilir).
+
+> **Avatar notu:** S2V 14B fp8'in 16 GB VRAM'e sığması doğrulanmadı; ComfyUI offload ile çalışır ama yavaştır (5 sn klip ≈ 5-10 dk). Sığmazsa ComfyUI'da GGUF Q5 sürümüyle kendi workflow'unu dışa aktarıp (`{{image}} {{audio}} {{length}}` yer tutucularıyla) Ayarlar'dan yükle ve "avatar workflow" olarak seç. Gerçek kişileri taklit eden görseller kullanma.
+
+> **YouTube Analytics:** v1'den bağlıysan Ayarlar → YouTube → "Analitik için yeniden bağlan" (yeni okuma izinleri gerekir).
+
 ## Kurulum (Windows)
 
 ### 1. Ön koşullar

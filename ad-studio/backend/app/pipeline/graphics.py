@@ -112,3 +112,31 @@ def thumbnail(out: Path, bg: Path, hook: str) -> Path:
     _center_text(d, hook.upper(), int(H * 0.36), 84, 16)
     img.resize((540, 960), Image.LANCZOS).save(out, quality=88)
     return out
+
+
+def cover_copy(src: Path, out: Path, size: tuple[int, int] = (768, 1344)) -> Path:
+    _cover(Image.open(src), size).save(out)
+    return out
+
+
+def price_badge(out: Path, price: str, label: str = "") -> Path:
+    """Rounded sticker with price; overlaid on the product hero scene."""
+    f, fs = font(76), font(34)
+    tmp = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    pb = tmp.textbbox((0, 0), price, font=f)
+    lb = tmp.textbbox((0, 0), label, font=fs) if label else (0, 0, 0, 0)
+    w = max(pb[2] - pb[0], lb[2] - lb[0]) + 90
+    h = (pb[3] - pb[1]) + (lb[3] - lb[1] + 16 if label else 0) + 70
+    img = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
+    sh = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).rounded_rectangle((20, 28, w + 20, h + 28), 36, fill=(0, 0, 0, 140))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(10)))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((20, 20, w + 20, h + 20), 36, fill=(255, 212, 0), outline=(255, 255, 255), width=5)
+    y = 20 + 35
+    if label:
+        d.text((20 + (w - (lb[2] - lb[0])) / 2, y - lb[1]), label, font=fs, fill=(40, 30, 0))
+        y += lb[3] - lb[1] + 16
+    d.text((20 + (w - (pb[2] - pb[0])) / 2, y - pb[1]), price, font=f, fill=(15, 15, 20))
+    img.rotate(-6, resample=Image.BICUBIC, expand=True).save(out)
+    return out

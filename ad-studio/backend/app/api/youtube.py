@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..config import boot, config, paths
+from ..models import Video, VideoStat, session
 from ..pipeline.runner import load, update
 from ..pipeline.script import AdScript
 
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]
 SECRET = boot.data_dir / "youtube_client_secret.json"
 TOKEN = boot.data_dir / "youtube_token.json"
 
@@ -25,7 +28,7 @@ def _creds():
         raise HTTPException(501, "pip install -r requirements-youtube.txt") from e
     if not TOKEN.exists():
         return None
-    creds = Credentials.from_authorized_user_file(str(TOKEN), SCOPES)
+    creds = Credentials.from_authorized_user_file(str(TOKEN))
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         TOKEN.write_text(creds.to_json())
@@ -35,11 +38,13 @@ def _creds():
 @router.get("/status")
 def status() -> dict:
     try:
-        ok = _creds() is not None
+        creds = _creds()
         installed = True
     except HTTPException:
-        ok, installed = False, False
-    return {"installed": installed, "has_secret": SECRET.exists(), "connected": ok}
+        creds, installed = None, False
+    granted = set(getattr(creds, "scopes", None) or [])
+    return {"installed": installed, "has_secret": SECRET.exists(), "connected": creds is not None,
+            "analytics": bool(creds) and SCOPES[2] in granted}
 
 
 @router.post("/connect")
@@ -82,14 +87,72 @@ def upload_sync(vid: int) -> str:
     resp = None
     while resp is None:
         _, resp = req.next_chunk()
-    return f"https://youtube.com/shorts/{resp['id']}"
+    return resp["id"]
 
 
 @router.post("/upload/{vid}")
 async def upload(vid: int) -> dict:
-    url = await asyncio.to_thread(upload_sync, vid)
-    update(vid, published_at=datetime.now(), publish_url=url, platform="youtube")
+    yid = await asyncio.to_thread(upload_sync, vid)
+    url = f"https://youtube.com/shorts/{yid}"
+    update(vid, published_at=datetime.now(), publish_url=url, platform="youtube", yt_id=yid)
     return {"url": url}
+
+
+def yt_id_from_url(url: str) -> str:
+    m = re.search(r"(?:shorts/|v=|youtu\.be/)([A-Za-z0-9_-]{11})", url or "")
+    return m.group(1) if m else ""
+
+
+def analytics_sync_blocking(days: int = 28) -> int:
+    """Pull per-day stats for every uploaded video into VideoStat. Returns rows written."""
+    from googleapiclient.discovery import build
+
+    creds = _creds()
+    if not creds or SCOPES[2] not in set(creds.scopes or []):
+        return 0
+    with session() as s:
+        vids = [(v.id, v.yt_id) for v in s.query(Video).filter(Video.yt_id != "").all()]
+    if not vids:
+        return 0
+    yta = build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False)
+    end = date.today()
+    start = end - timedelta(days=days)
+    written = 0
+    for vid, yid in vids:
+        resp = yta.reports().query(
+            ids="channel==MINE", startDate=start.isoformat(), endDate=end.isoformat(), dimensions="day",
+            metrics="views,averageViewDuration,averageViewPercentage,likes,shares,subscribersGained",
+            filters=f"video=={yid}", sort="day").execute()
+        written += store_rows(vid, resp)
+    return written
+
+
+def store_rows(vid: int, resp: dict) -> int:
+    cols = [h["name"] for h in resp.get("columnHeaders", [])]
+    rows = [dict(zip(cols, r)) for r in resp.get("rows", []) or []]
+    with session() as s:
+        for r in rows:
+            day = date.fromisoformat(r["day"])
+            st = s.query(VideoStat).filter(VideoStat.video_id == vid, VideoStat.day == day, VideoStat.source == "youtube").first() \
+                or VideoStat(video_id=vid, day=day, source="youtube")
+            st.views = int(r.get("views", 0))
+            st.avg_view_duration = float(r.get("averageViewDuration", 0))
+            st.avg_view_pct = float(r.get("averageViewPercentage", 0))
+            st.likes = int(r.get("likes", 0))
+            st.shares = int(r.get("shares", 0))
+            st.subs_gained = int(r.get("subscribersGained", 0))
+            s.add(st)
+        s.commit()
+    return len(rows)
+
+
+@router.post("/analytics/sync")
+async def analytics_sync() -> dict:
+    try:
+        n = await asyncio.to_thread(analytics_sync_blocking)
+    except ImportError as e:
+        raise HTTPException(501, "pip install -r requirements-youtube.txt") from e
+    return {"rows": n}
 
 
 @router.post("/secret")

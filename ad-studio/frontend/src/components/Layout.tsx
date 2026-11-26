@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BadgeDollarSign, CalendarDays, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
+  BadgeDollarSign, Bot, CalendarDays, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
   Settings, Sparkles, Sun, X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -18,6 +18,7 @@ const NAV = [
   { to: "/queue", label: "Üretim Kuyruğu", icon: ListVideo },
   { to: "/library", label: "Kütüphane", icon: Film },
   { to: "/calendar", label: "Yayın Takvimi", icon: CalendarDays },
+  { to: "/autopilot", label: "Otopilot", icon: Bot },
   { to: "/revenue", label: "Gelir & ROI", icon: BadgeDollarSign },
   { to: "/settings", label: "Ayarlar", icon: Settings },
 ];
@@ -146,7 +147,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const active = h?.queue.current.length ?? 0;
   return (
-    <div className="flex h-full">
+    <div className="flex min-h-full">
       <aside className="sticky top-0 hidden h-screen w-[264px] shrink-0 border-r border-line/60 bg-panel/40 backdrop-blur-xl lg:block"><SideNav /></aside>
       <AnimatePresence>
         {mobile && (

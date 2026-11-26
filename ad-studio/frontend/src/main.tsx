@@ -6,6 +6,7 @@ import { Toaster } from "sonner";
 import Layout from "./components/Layout";
 import "./index.css";
 import { useLiveEvents } from "./lib/live";
+import Autopilot from "./pages/Autopilot";
 import Calendar from "./pages/Calendar";
 import CampaignDetail from "./pages/CampaignDetail";
 import Campaigns from "./pages/Campaigns";
@@ -33,6 +34,7 @@ function App() {
         <Route path="/library" element={<Library />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/revenue" element={<RevenuePage />} />
+        <Route path="/autopilot" element={<Autopilot />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

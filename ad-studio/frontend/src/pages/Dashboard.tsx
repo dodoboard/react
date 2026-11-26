@@ -25,7 +25,7 @@ function Kpi({ icon, label, value, sub, tone, i }: { icon: ReactNode; label: str
 
 export default function Dashboard() {
   const { data: s } = useQuery({ queryKey: ["summary"], queryFn: () => api.summary(30) });
-  const { data: vids } = useQuery({ queryKey: ["videos", "recent"], queryFn: () => api.videos("?limit=8") });
+  const { data: vids } = useQuery({ queryKey: ["videos", "recent"], queryFn: () => api.videos("?limit=6") });
   const { data: h } = useQuery({ queryKey: ["health"], queryFn: api.health });
   const [open, setOpen] = useState<number | null>(null);
   const cur = s?.currency ?? "TRY";
@@ -39,8 +39,8 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {s ? (<>
           <Kpi i={0} icon={<Wallet className="h-4 w-4" />} label="Bu ay gelir" value={money(s.kpi.month_revenue, cur)} sub={`Toplam ${money(s.kpi.total_revenue, cur)}`} tone="bg-emerald-500" />
-          <Kpi i={1} icon={<TrendingUp className="h-4 w-4" />} label="ROI" value={s.kpi.roi === null ? "—" : `%${num(s.kpi.roi)}`} sub={`Maliyet ${money(s.kpi.total_cost, cur)}`} tone="grad-bg" />
-          <Kpi i={2} icon={<Film className="h-4 w-4" />} label="Hazır video" value={num(s.kpi.videos_done)} sub={`${s.kpi.published} yayında · ${s.kpi.scheduled} planlı`} tone="bg-sky-500" />
+          <Kpi i={1} icon={<TrendingUp className="h-4 w-4" />} label="ROI" value={s.kpi.roi === null ? "—" : `%${num(s.kpi.roi)}`} sub={`Maliyet ${money(s.kpi.total_cost, cur)}${s.kpi.rpm != null ? ` · RPM ${money(s.kpi.rpm, cur)}` : ""}`} tone="grad-bg" />
+          <Kpi i={2} icon={<Film className="h-4 w-4" />} label="Hazır video" value={num(s.kpi.videos_done)} sub={`${s.kpi.published} yayında · ${s.kpi.scheduled} planlı${s.kpi.views ? ` · ${num(s.kpi.views)} izlenme` : ""}`} tone="bg-sky-500" />
           <Kpi i={3} icon={<Coins className="h-4 w-4" />} label={h?.tts.provider === "elevenlabs" ? "ElevenLabs kota" : "Dönüşüm"}
             value={quota !== null ? num(quota) : num(s.kpi.conversions)} sub={quota !== null ? `karakter kaldı · ${h?.tts.tier ?? ""}` : `${num(s.kpi.clicks)} tıklama`} tone="bg-amber-500" />
         </>) : Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[132px]" />)}
@@ -96,13 +96,33 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {s && s.hook_retention.length > 0 && (
+        <div className="card mt-6 p-5">
+          <div className="mb-4 flex items-end justify-between">
+            <div><h3 className="font-display font-bold">Hook tutma oranı</h3><p className="text-xs text-muted">YouTube ortalama izlenme yüzdesi · ort. %{s.kpi.avg_retention ?? "—"}</p></div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {s.hook_retention.map((h) => (
+              <div key={h.id} className="flex items-center gap-3">
+                <div className="w-12 shrink-0 text-right font-display text-lg font-extrabold">%{Math.round(h.retention)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm">{h.hook}</div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-elev"><div className="h-full rounded-full grad-bg" style={{ width: `${Math.min(100, h.retention)}%` }} /></div>
+                </div>
+                {h.score != null && <span className="text-xs text-muted">★{h.score.toFixed(1)}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-8 flex items-center justify-between">
         <h3 className="font-display text-lg font-bold">Son videolar</h3>
         <Link to="/library" className="flex items-center gap-1 text-sm font-medium text-brand">Tümü <ArrowUpRight className="h-4 w-4" /></Link>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
+      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {vids ? vids.map((v) => <VideoCard key={v.id} v={v} onOpen={() => setOpen(v.id)} />)
-          : Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="aspect-[9/16]" />)}
+          : Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="aspect-[9/16]" />)}
         {vids?.length === 0 && <p className="col-span-full text-sm text-muted">Henüz video yok — Kampanya Stüdyosu'ndan ilkini üret.</p>}
       </div>
       <VideoModal v={vids?.find((x) => x.id === open) ?? null} onClose={() => setOpen(null)} />
