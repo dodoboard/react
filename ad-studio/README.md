@@ -19,6 +19,20 @@ Hedef donanım: RTX 5080 (16 GB VRAM) · Core Ultra 9 275HX · 32 GB RAM · Wind
 - **Yayın:** takvim (sürükle-bırak, en iyi saatlere otomatik dağıtım), yayın paketi (.zip: mp4 + caption + thumbnail), YouTube Shorts API ile direkt/zamanlanmış yükleme.
 - **Uyum:** açıklamaya otomatik `#reklam #işbirliği` ve "yapay zekâ ile üretildi" etiketi; YouTube yüklemelerinde `containsSyntheticMedia: true`.
 
+## v3 — Firmalar (çok markalı ajans modu)
+| Özellik | Ne yapar | Nerede |
+|---|---|---|
+| **Firma kartı** | Her firma için logo, ana/vurgu rengi, kurumsal font, marka sesi, CTA, hashtag, reklam ibaresi; videolarda otomatik uygulanır (altyazı vurgusu, ilerleme çubuğu, fiyat rozeti, logo filigranı, kapanış kartı). | Firmalar → Yeni firma |
+| **Mesaj kuralları** | Ton, hedef kitle, marka kuralları, *mutlaka söylenecekler* ve **yasaklı kelimeler** prompt'a girer; çıktıda yasaklı kelime varsa otomatik yeniden yazılır, kalırsa uyarı verilir. | Firma → Mesaj kuralları |
+| **Tek videoda çok ürün** | 2-6 ürün: Top liste, Kombin, Karşılaştırma, İndirim vitrini, Hediye rehberi. Her ürün kendi sahnesinde gerçek görseliyle, kendi fiyat rozetiyle; kapanışta numaralı ürün ızgarası. | Stüdyo → Çok ürün |
+| **Ürün bazlı takip** | Çok ürünlü videoda her ürün linki `{subid}p{ürünID}` alır → CSV içe aktarımı geliri doğru ürüne ve firmaya bağlar. | Gelir & ROI |
+| **Firma seçici** | Üst bardaki seçici tüm sayfaları (dashboard, ürünler, kampanyalar, kütüphane, takvim, gelir) o firmaya filtreler. | Üst bar |
+| **Onay akışı** | Taslak → Onayda → Onaylandı / Revizyon. Seçili videolar için **onay paketi** (.zip: mp4 + açıklamalar) indirilir, durum otomatik "Onayda" olur. | Firma → Videolar |
+| **Faturalama** | Aylık sabit + video başı ücret; "Ay tahakkukunu oluştur" (tekrar çalıştırmak güvenli, ödenmiş kalemlere dokunmaz), ek kalem, ödendi işaretleme. | Firma → Faturalama |
+| **Aylık müşteri raporu** | Tek dosya HTML: KPI'lar, video tablosu (izlenme, izlenme oranı, tıklama, satış), hizmet bedeli özeti, firma logosu ve renkleriyle — e-postayla gönder. | Firma → Aylık rapor |
+| **Kârlılık** | Dashboard'da firmalara göre kâr (hizmet bedeli + affiliate − üretim maliyeti). | Genel Bakış |
+| **Otopilot** | Kural bir firmaya bağlanabilir ve çok ürünlü video üretebilir. | Otopilot |
+
 ## v2 — Dönüşüm odaklı özellikler
 | Özellik | Ne yapar | Nerede |
 |---|---|---|

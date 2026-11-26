@@ -3,11 +3,13 @@ import { motion } from "framer-motion";
 import { Clapperboard, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button, Empty, PageHeader, Pill, Progress, Skeleton } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api } from "@/lib/api";
 import { ago, money, PLATFORMS } from "@/lib/utils";
 
 export default function Campaigns() {
-  const { data } = useQuery({ queryKey: ["campaigns"], queryFn: api.campaigns });
+  const { brandId } = useBrand();
+  const { data } = useQuery({ queryKey: ["campaigns", brandId], queryFn: () => api.campaigns(brandId) });
   return (
     <>
       <PageHeader eyebrow="Kampanyalar" title="Tüm kampanyalar" desc="Her kampanya bir ürün için birden çok A/B varyantı içerir."

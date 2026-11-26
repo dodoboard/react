@@ -1,13 +1,17 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   Ban, Check, Copy, Download, ExternalLink, Heart, Mic, Pencil, Play, Plus, RefreshCw, Trash2, Wand2, Youtube,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { type AdScript, api, type Video } from "@/lib/api";
+import { type AdScript, api, type Approval, type Video } from "@/lib/api";
+import { BrandMark } from "./BrandSwitcher";
 import { ANGLES, cn, PLATFORMS, STATUS } from "@/lib/utils";
 import { Button, Field, Modal, PhoneFrame, Pill, Progress, Segmented, StatusBadge } from "./ui";
+
+const APPROVAL_LABEL: Record<Approval, string> = { draft: "Taslak", sent: "Onayda", approved: "Onaylı", revision: "Revizyon" };
+const APPROVAL_TONE: Record<Approval, string> = { draft: "", sent: "text-sky-500", approved: "text-emerald-500", revision: "text-amber-500" };
 
 export function useVideoActions() {
   const qc = useQueryClient();
@@ -49,6 +53,7 @@ export function VideoCard({ v, onOpen }: { v: Video; onOpen: () => void }) {
         )}
         {v.duration && <span className="absolute bottom-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">{v.duration.toFixed(1)}s</span>}
         {v.favorite && <Heart className="absolute bottom-2 left-2 h-4 w-4 fill-rose-500 text-rose-500" />}
+        {v.brand && <span className="absolute left-2.5 top-9"><BrandMark b={v.brand} size={22} /></span>}
       </div>
       <div className="space-y-2 p-3">
         <p className="line-clamp-2 text-[13px] font-medium leading-snug">{v.hook || "—"}</p>
@@ -56,6 +61,8 @@ export function VideoCard({ v, onOpen }: { v: Video; onOpen: () => void }) {
           <Pill>{ANGLES[v.angle] ?? v.angle}</Pill>
           {v.hook_score != null && <Pill className={cn(v.hook_score >= 8 ? "text-emerald-500" : v.hook_score >= 6 ? "text-amber-500" : "text-rose-400")}>★ {v.hook_score.toFixed(1)}</Pill>}
           {v.views != null && <Pill>{v.views.toLocaleString("tr-TR")} izl.</Pill>}
+          {(v.product_count ?? 1) > 1 && <Pill>{v.product_count} ürün</Pill>}
+          {v.approval && v.approval !== "draft" && <Pill className={APPROVAL_TONE[v.approval]}>{APPROVAL_LABEL[v.approval]}</Pill>}
           {v.published_at && <Pill className="border-emerald-500/30 text-emerald-500">Yayında</Pill>}
           {v.scheduled_at && !v.published_at && <Pill className="border-sky-500/30 text-sky-500">Planlı</Pill>}
         </div>
@@ -115,11 +122,14 @@ export function VideoModal({ v, onClose }: { v: Video | null; onClose: () => voi
   const [tab, setTab] = useState<"preview" | "script">("preview");
   const [copied, setCopied] = useState(false);
   const [when, setWhen] = useState("");
+  const { data: detail } = useQuery({ queryKey: ["video", v?.id], queryFn: () => api.video(v!.id), enabled: !!v });
   useEffect(() => {
     if (v) { setTab(v.status === "scripted" ? "script" : "preview"); setWhen(v.scheduled_at?.slice(0, 16) ?? ""); }
   }, [v?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!v) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
-  const fullCaption = [v.script?.title, v.caption, v.tracking_url].filter(Boolean).join("\n\n");
+  const links = detail?.links ?? v.links;
+  const linkText = links && links.length > 1 ? links.map((l) => `${l.name}: ${l.url}`).join("\n") : v.tracking_url;
+  const fullCaption = [v.script?.title, v.caption, linkText].filter(Boolean).join("\n\n");
   const busy = STATUS[v.status].active;
   return (
     <Modal open={!!v} onClose={onClose} wide title={<span className="flex items-center gap-3">Video #{v.id} <StatusBadge status={v.status} /></span>}>
@@ -147,6 +157,13 @@ export function VideoModal({ v, onClose }: { v: Video | null; onClose: () => voi
               </div>
               <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-elev/40 p-3 font-sans text-[13px] leading-relaxed text-fg/90">{fullCaption}</pre>
             </div>
+            {v.brand && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-elev/30 p-3">
+                <BrandMark b={v.brand} size={28} /><span className="text-sm font-medium">{v.brand.name}</span>
+                <div className="ml-auto"><Segmented value={v.approval} onChange={(ap) => a.patch.mutate({ id: v.id, approval: ap })}
+                  options={(Object.keys(APPROVAL_LABEL) as Approval[]).map((k) => ({ id: k, label: APPROVAL_LABEL[k] }))} /></div>
+              </div>
+            )}
             <div className="grid gap-3 rounded-xl border border-line bg-elev/30 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
               <Field label="Platform">
                 <select className="input" value={v.platform} onChange={(e) => a.patch.mutate({ id: v.id, platform: e.target.value })}>

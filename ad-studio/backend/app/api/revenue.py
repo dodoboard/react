@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -9,7 +10,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..config import config
-from ..models import Campaign, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
+from ..models import Brand, BrandCharge, Campaign, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
 
 router = APIRouter(prefix="/api", tags=["revenue"])
 
@@ -19,6 +20,9 @@ class RevenueIn(BaseModel):
     video_id: int | None = None
     campaign_id: int | None = None
     subid: str | None = None
+    product_id: int | None = None
+    brand_id: int | None = None
+    kind: str = "affiliate"
     platform: str = ""
     amount: float = 0
     clicks: int = 0
@@ -27,26 +31,49 @@ class RevenueIn(BaseModel):
     note: str = ""
 
 
+SUBID = re.compile(r"^(af[0-9a-f]{8})(?:p(\d+))?$")
+
+
 def _resolve(s, body: RevenueIn) -> RevenueEntry:
+    """Link a revenue row to video / product / campaign / brand. subid 'afxxxxxxxx' or 'afxxxxxxxxp<product_id>'."""
     d = body.model_dump(exclude={"subid"})
     if body.subid and not body.video_id:
-        v = s.query(Video).filter(Video.subid == body.subid.strip()).first()
-        if v:
-            d["video_id"] = v.id
+        m = SUBID.match(body.subid.strip().lower())
+        if m:
+            v = s.query(Video).filter(Video.subid == m.group(1)).first()
+            if v:
+                d["video_id"] = v.id
+            if m.group(2) and not d["product_id"]:
+                d["product_id"] = int(m.group(2)) if s.get(Product, int(m.group(2))) else None
     if d["video_id"] and not d["campaign_id"]:
         v = s.get(Video, d["video_id"])
         d["campaign_id"] = v.campaign_id if v else None
+    if d["campaign_id"]:
+        c = s.get(Campaign, d["campaign_id"])
+        if c:
+            d["product_id"] = d["product_id"] or c.product_id
+            d["brand_id"] = d["brand_id"] or c.brand_id
+    if d["product_id"] and not d["brand_id"]:
+        pr = s.get(Product, d["product_id"])
+        d["brand_id"] = pr.brand_id if pr else None
     return RevenueEntry(**d)
 
 
 @router.get("/revenue")
-def list_revenue(limit: int = 500) -> list[dict]:
+def list_revenue(limit: int = 500, brand_id: int | None = None) -> list[dict]:
     with session() as s:
-        rows = s.query(RevenueEntry).order_by(RevenueEntry.day.desc(), RevenueEntry.id.desc()).limit(limit).all()
+        q = s.query(RevenueEntry)
+        if brand_id:
+            q = q.filter(RevenueEntry.brand_id == brand_id)
+        rows = q.order_by(RevenueEntry.day.desc(), RevenueEntry.id.desc()).limit(limit).all()
         vids = {v.id: v for v in s.query(Video).filter(Video.id.in_({r.video_id for r in rows if r.video_id})).all()}
         camps = {c.id: c for c in s.query(Campaign).all()}
+        prods = {p.id: p for p in s.query(Product).all()}
+        brands = {b.id: b for b in s.query(Brand).all()}
         return [r.model_dump() | {"video_label": f"#{r.video_id} {vids[r.video_id].ab_label}" if r.video_id in vids else None,
-                                  "campaign_name": camps[r.campaign_id].name if r.campaign_id in camps else None}
+                                  "campaign_name": camps[r.campaign_id].name if r.campaign_id in camps else None,
+                                  "product_name": prods[r.product_id].name if r.product_id in prods else None,
+                                  "brand_name": brands[r.brand_id].name if r.brand_id in brands else None}
                 for r in rows]
 
 
@@ -127,7 +154,7 @@ def video_cost(v: Video) -> float:
 
 
 @router.get("/analytics/summary")
-def summary(days: int = 30) -> dict:
+def summary(days: int = 30, brand_id: int | None = None) -> dict:
     today = date.today()
     start = today - timedelta(days=days - 1)
     month_start = today.replace(day=1)
@@ -137,6 +164,20 @@ def summary(days: int = 30) -> dict:
         camps = {c.id: c for c in s.query(Campaign).all()}
         prods = {p.id: p for p in s.query(Product).all()}
         stats = s.query(VideoStat).all()
+        brands = {b.id: b for b in s.query(Brand).all()}
+        charges = s.query(BrandCharge).all()
+    all_vids, all_revs = vids, revs
+    if brand_id:
+        camps = {k: c for k, c in camps.items() if c.brand_id == brand_id}
+        vids = [v for v in vids if v.campaign_id in camps]
+        vid_ids = {v.id for v in vids}
+        revs = [r for r in revs if r.brand_id == brand_id or r.campaign_id in camps or r.video_id in vid_ids]
+        stats = [st for st in stats if st.video_id in vid_ids]
+        charges = [c for c in charges if c.brand_id == brand_id]
+    period = today.strftime("%Y-%m")
+    fees_month = sum(c.amount for c in charges if c.period == period)
+    fees_total = sum(c.amount for c in charges)
+    fees_unpaid = sum(c.amount for c in charges if not c.paid)
 
     series = {start + timedelta(days=i): {"revenue": 0.0, "cost": 0.0, "videos": 0, "views": 0} for i in range(days)}
     vstats: dict[int, dict] = defaultdict(lambda: {"views": 0, "ret_w": 0.0})
@@ -209,6 +250,9 @@ def summary(days: int = 30) -> dict:
             "rpm": round(total_rev / total_views * 1000, 2) if total_views else None,
         },
         "hook_retention": hook_ret,
+        "fees": {"month": round(fees_month, 2), "total": round(fees_total, 2), "unpaid": round(fees_unpaid, 2)},
+        "profit": round(total_rev + fees_total - total_cost, 2),
+        "by_brand": brand_rows(brands, all_vids, all_revs),
         "series": [{"day": d.isoformat(), **{k: round(x, 2) if isinstance(x, float) else x for k, x in val.items()}}
                    for d, val in series.items()],
         "top_videos": [{"id": vid, "hook": vmap[vid].hook, "label": vmap[vid].ab_label, "angle": vmap[vid].angle,
@@ -220,3 +264,18 @@ def summary(days: int = 30) -> dict:
         "platforms": [{"platform": k, "revenue": round(v, 2)} for k, v in sorted(by_platform.items(), key=lambda kv: -kv[1])],
         "campaigns": sorted(camp_rows, key=lambda r: r["revenue"], reverse=True),
     }
+
+
+def brand_rows(brands: dict, vids: list, revs: list) -> list[dict]:
+    with session() as s:
+        camp_brand = {c.id: c.brand_id for c in s.query(Campaign).all()}
+        all_charges = s.query(BrandCharge).all()
+    out = []
+    for bid, b in brands.items():
+        bv = [v for v in vids if camp_brand.get(v.campaign_id) == bid]
+        aff = sum(r.amount for r in revs if r.brand_id == bid)
+        fees = sum(c.amount for c in all_charges if c.brand_id == bid)
+        cost = sum(video_cost(v) for v in bv)
+        out.append({"id": bid, "name": b.name, "color": b.primary_color, "videos": len(bv), "affiliate": round(aff, 2),
+                    "fees": round(fees, 2), "cost": round(cost, 2), "profit": round(aff + fees - cost, 2)})
+    return sorted(out, key=lambda r: -r["profit"])

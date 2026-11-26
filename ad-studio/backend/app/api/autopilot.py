@@ -22,6 +22,10 @@ EXPLORE = 0.2
 class RuleIn(BaseModel):
     name: str = "Otopilot"
     enabled: bool = True
+    brand_id: int | None = None
+    kind: str = "single"
+    collection_type: str = "top_list"
+    products_per_video: int = 3
     product_ids: list[int] = []
     videos_per_day: int = 3
     run_hour: int = 2
@@ -47,6 +51,8 @@ def rule_dict(r: AutopilotRule) -> dict:
 def _apply(r: AutopilotRule, body: RuleIn) -> None:
     if not 1 <= body.videos_per_day <= 30 or not 0 <= body.run_hour <= 23:
         raise HTTPException(422, "Günlük video 1-30, saat 0-23 olmalı")
+    if body.kind == "collection" and not 2 <= body.products_per_video <= 6:
+        raise HTTPException(422, "Çok ürünlü videoda 2-6 ürün olmalı")
     for k, v in body.model_dump(exclude={"product_ids"}).items():
         setattr(r, k, v)
     r.product_ids = ",".join(str(i) for i in body.product_ids)
@@ -135,10 +141,22 @@ def run_rule(r: AutopilotRule, rng: random.Random | None = None) -> list[int]:
     ids = [int(x) for x in r.product_ids.split(",") if x]
     with session() as s:
         q = s.query(Product).filter(Product.id.in_(ids)) if ids else s.query(Product).filter(Product.active.is_(True))
+        if r.brand_id:
+            q = q.filter(Product.brand_id == r.brand_id)
         pool = [p for p in q.all() if p.image_path]
     if not pool:
         log.warning("autopilot %s: ürün havuzu boş (görselli ürün yok)", r.id)
         return []
+    if r.kind == "collection" and len(pool) >= 2:
+        n = min(r.products_per_video, len(pool))
+        chosen = pick_products(pool, n, rng)
+        body = CampaignIn(product_ids=[p.id for p in chosen], kind="collection", collection_type=r.collection_type,
+                          brand_id=r.brand_id, name=f"Otopilot · {n} ürün · {date.today():%d.%m}", language=r.language,
+                          variants=r.videos_per_day, target_platform=r.platform, format=r.format, avatar=r.avatar,
+                          i2v_mode=r.i2v_mode, auto_render=True)
+        created = [create_campaign_service(body, autopilot_id=r.id)]
+        _mark_run(r)
+        return created
     k = min(len(pool), max(1, math.ceil(r.videos_per_day / 3)))
     products = pick_products(pool, k, rng)
     per = [r.videos_per_day // k + (1 if i < r.videos_per_day % k else 0) for i in range(k)]
@@ -150,13 +168,17 @@ def run_rule(r: AutopilotRule, rng: random.Random | None = None) -> list[int]:
                           variants=n, target_platform=r.platform, format=r.format, avatar=r.avatar,
                           i2v_mode=r.i2v_mode, auto_render=True)
         created.append(create_campaign_service(body, autopilot_id=r.id))
+    _mark_run(r)
+    return created
+
+
+def _mark_run(r: AutopilotRule) -> None:
     with session() as s:
         rr = s.get(AutopilotRule, r.id)
         if rr:
             rr.last_run = date.today()
             s.add(rr)
             s.commit()
-    return created
 
 
 def due_rules(now: datetime) -> list[AutopilotRule]:

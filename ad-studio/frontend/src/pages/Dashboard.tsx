@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { VideoCard, VideoModal } from "@/components/VideoCard";
 import { Button, PageHeader, Skeleton } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api } from "@/lib/api";
 import { ANGLES, cn, money, num } from "@/lib/utils";
 
@@ -24,8 +25,9 @@ function Kpi({ icon, label, value, sub, tone, i }: { icon: ReactNode; label: str
 }
 
 export default function Dashboard() {
-  const { data: s } = useQuery({ queryKey: ["summary"], queryFn: () => api.summary(30) });
-  const { data: vids } = useQuery({ queryKey: ["videos", "recent"], queryFn: () => api.videos("?limit=6") });
+  const { brandId } = useBrand();
+  const { data: s } = useQuery({ queryKey: ["summary", 30, brandId], queryFn: () => api.summary(30, brandId) });
+  const { data: vids } = useQuery({ queryKey: ["videos", "recent", brandId], queryFn: () => api.videos("?limit=6", brandId) });
   const { data: h } = useQuery({ queryKey: ["health"], queryFn: api.health });
   const [open, setOpen] = useState<number | null>(null);
   const cur = s?.currency ?? "TRY";
@@ -95,6 +97,27 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {s && !brandId && s.by_brand.length > 0 && (
+        <div className="card mt-6 p-5">
+          <div className="mb-4 flex items-end justify-between">
+            <div><h3 className="font-display font-bold">Firmalara göre kâr</h3><p className="text-xs text-muted">Hizmet bedeli + affiliate − üretim maliyeti</p></div>
+            <Link to="/brands" className="text-sm font-medium text-brand">Firmalar</Link>
+          </div>
+          <div className="space-y-3">
+            {s.by_brand.slice(0, 6).map((b) => {
+              const max = Math.max(...s.by_brand.map((x) => Math.abs(x.profit)), 1);
+              return (
+                <Link key={b.id} to={`/brands/${b.id}`} className="grid grid-cols-[140px_1fr_auto] items-center gap-3 text-sm sm:grid-cols-[180px_1fr_auto]">
+                  <span className="flex items-center gap-2 truncate"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: b.color }} />{b.name}</span>
+                  <div className="h-2 overflow-hidden rounded-full bg-elev"><div className="h-full rounded-full" style={{ width: `${(Math.abs(b.profit) / max) * 100}%`, background: b.profit >= 0 ? b.color : "#f43f5e" }} /></div>
+                  <span className="text-right font-semibold">{money(b.profit, cur)}<span className="ml-2 hidden text-xs font-normal text-muted sm:inline">{b.videos} video</span></span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {s && s.hook_retention.length > 0 && (
         <div className="card mt-6 p-5">

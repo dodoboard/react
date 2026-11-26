@@ -30,6 +30,7 @@ class ProductIn(BaseModel):
     commission_rate: float | None = None
     image_path: str | None = None
     active: bool = True
+    brand_id: int | None = None
 
 
 def out(p: Product) -> dict:
@@ -40,9 +41,12 @@ def out(p: Product) -> dict:
 
 
 @router.get("")
-def list_products() -> list[dict]:
+def list_products(brand_id: int | None = None) -> list[dict]:
     with session() as s:
-        return [out(p) for p in s.query(Product).order_by(Product.created_at.desc()).all()]
+        q = s.query(Product)
+        if brand_id:
+            q = q.filter(Product.brand_id == brand_id)
+        return [out(p) for p in q.order_by(Product.created_at.desc()).all()]
 
 
 @router.post("")

@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button, Empty, Field, Modal, PageHeader, Pill, Skeleton, Toggle } from "@/components/ui";
+import { BrandMark } from "@/components/BrandSwitcher";
 import { api, type Product } from "@/lib/api";
+import { useBrand } from "@/lib/brand";
 import { cn, money } from "@/lib/utils";
 
 const BLANK: Partial<Product> = { name: "", description: "", features: "", price: null, currency: "TRY", affiliate_url: "", platform: "", commission_rate: null };
@@ -13,12 +15,14 @@ const BLANK: Partial<Product> = { name: "", description: "", features: "", price
 export function ProductForm({ initial, open, onClose, onSaved }: { initial: Partial<Product> | null; open: boolean; onClose: () => void; onSaved?: (p: Product) => void }) {
   const qc = useQueryClient();
   const [p, setP] = useState<Partial<Product>>(BLANK);
+  const { brandId } = useBrand();
+  const { data: brands } = useQuery({ queryKey: ["brands"], queryFn: api.brands, enabled: open });
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (open) { setP(initial ?? BLANK); setFile(null); setPreview(initial?.image_url ?? null); setUrl(""); } }, [open, initial]);
+  useEffect(() => { if (open) { setP(initial ?? { ...BLANK, brand_id: brandId }); setFile(null); setPreview(initial?.image_url ?? null); setUrl(""); } }, [open, initial]);
 
   const auto = useMutation({
     mutationFn: () => api.autofill(url),
@@ -79,7 +83,9 @@ export function ProductForm({ initial, open, onClose, onSaved }: { initial: Part
           )}
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Ürün adı" className="sm:col-span-2"><input className="input" value={p.name ?? ""} onChange={set("name")} /></Field>
+          <Field label="Ürün adı"><input className="input" value={p.name ?? ""} onChange={set("name")} /></Field>
+          <Field label="Firma"><select className="input" value={p.brand_id ?? ""} onChange={(e) => setP({ ...p, brand_id: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">Firmasız</option>{brands?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
           <Field label="Açıklama" className="sm:col-span-2"><textarea className="input min-h-[80px]" value={p.description ?? ""} onChange={set("description")} /></Field>
           <Field label="Özellikler (her satır bir özellik)" className="sm:col-span-2" hint="LLM yalnızca bu özellikleri kullanır — uydurma iddia üretmez.">
             <textarea className="input min-h-[110px]" value={p.features ?? ""} onChange={set("features")} placeholder={"40 saat pil ömrü\nAktif gürültü engelleme\nHızlı şarj"} />
@@ -101,7 +107,9 @@ export function ProductForm({ initial, open, onClose, onSaved }: { initial: Part
 export default function Products() {
   const qc = useQueryClient();
   const nav = useNavigate();
-  const { data } = useQuery({ queryKey: ["products"], queryFn: api.products });
+  const { brandId } = useBrand();
+  const { data } = useQuery({ queryKey: ["products", brandId], queryFn: () => api.products(brandId) });
+  const { data: brands } = useQuery({ queryKey: ["brands"], queryFn: api.brands });
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
   const [open, setOpen] = useState(false);
   const del = useMutation({ mutationFn: api.deleteProduct, onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }), onError: (e: Error) => toast.error(e.message) });
@@ -117,7 +125,8 @@ export default function Products() {
           <motion.div key={p.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="card group flex flex-col overflow-hidden">
             <div className="relative aspect-[4/3] bg-gradient-to-br from-elev to-panel">
               {p.image_url ? <img src={p.image_url} className="h-full w-full object-contain p-6 transition duration-500 group-hover:scale-105" /> : <Package className="absolute inset-0 m-auto h-10 w-10 text-muted/40" />}
-              <div className="absolute left-3 top-3 flex gap-1">{p.platform && <Pill className="bg-panel/90">{p.platform}</Pill>}
+              <div className="absolute left-3 top-3 flex gap-1">{(() => { const b = brands?.find((x) => x.id === p.brand_id); return b ? <BrandMark b={{ name: b.name, logo_url: b.logo_url, color: b.primary_color }} size={24} /> : null; })()}
+                {p.platform && <Pill className="bg-panel/90">{p.platform}</Pill>}
                 {p.cutout_url && <Pill className="bg-panel/90 text-emerald-500">Kesildi</Pill>}{!p.active && <Pill className="bg-panel/90">Pasif</Pill>}</div>
               <div className="absolute right-3 top-3 flex gap-1 opacity-0 transition group-hover:opacity-100">
                 <button onClick={() => { setEdit(p); setOpen(true); }} className="rounded-lg bg-panel/90 p-2 text-muted hover:text-fg"><Pencil className="h-3.5 w-3.5" /></button>

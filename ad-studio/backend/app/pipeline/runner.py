@@ -12,9 +12,9 @@ from pathlib import Path
 
 from ..config import boot, config, paths
 from ..events import broker
-from ..models import ACTIVE, Campaign, Product, Video, VideoStatus, now, session
+from ..models import ACTIVE, Campaign, CampaignProduct, Product, Video, VideoStatus, now, session
 from ..providers import comfy, ollama, tts
-from . import graphics, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
+from . import brandkit, graphics, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
 from .compose import Effects, Overlay, Segment, compose
 
 log = logging.getLogger("adforge.runner")
@@ -63,6 +63,17 @@ def load(vid: int) -> tuple[Video, Campaign, Product]:
         c = s.get(Campaign, v.campaign_id)
         p = s.get(Product, c.product_id)
         return v, c, p
+
+
+def campaign_products(c: Campaign) -> list[Product]:
+    with session() as s:
+        links = s.query(CampaignProduct).filter(CampaignProduct.campaign_id == c.id).order_by(CampaignProduct.position).all()
+        prods = [s.get(Product, l.product_id) for l in links] if links else [s.get(Product, c.product_id)]
+    return [p for p in prods if p]
+
+
+def product_subid(subid: str, p: Product, multi: bool) -> str:
+    return f"{subid}p{p.id}" if multi else subid
 
 
 def tracking_url(p: Product, subid: str) -> str:
@@ -177,13 +188,15 @@ class Runner:
             if not v.script_json and not v.hook and v.status != VideoStatus.cancelled:
                 by_camp.setdefault(c.id, []).append(v)
         for cid, group in by_camp.items():
-            _, c, p = load(group[0].id)
+            _, c, _ = load(group[0].id)
+            prods = campaign_products(c)
+            style = brandkit.resolve(c)
             for v in group:
                 update(v.id, status=VideoStatus.scripting, step="Hook turnuvası", progress=2)
             angles = [v.angle for v in group]
             try:
                 picks = (script_mod.stub_tournament(angles, cid) if boot.dry_run else
-                         await script_mod.tournament(p, c, angles, insights.winning_hooks(5, cid), config.get().hooks_per_slot))
+                         await script_mod.tournament(prods, c, angles, insights.winning_hooks(5, cid), config.get().hooks_per_slot, style))
             except Exception as e:  # tournament is an optimisation; fall back to per-video hooks
                 log.warning("hook tournament failed for campaign %s: %s", cid, e)
                 continue
@@ -197,10 +210,16 @@ class Runner:
         await self._progress(vid, "script", 0.2, "Ollama senaryo yazıyor")
         with session() as s:
             others = [x.hook for x in s.query(Video).filter(Video.campaign_id == c.id, Video.id != vid).all() if x.hook]
-        sc = (script_mod.stub(p, c, v.angle, v.variant_index, v.hook) if boot.dry_run
-              else await script_mod.generate(p, c, v.angle, others[-6:], v.hook, insights.winning_hooks(5, c.id)))
-        update(vid, script_json=sc.model_dump_json(), hook=sc.hook, caption=script_mod.full_caption(sc),
-               progress=PROGRESS["script"][1], step="Senaryo hazır")
+        prods = campaign_products(c)
+        style = brandkit.resolve(c)
+        bad: list[str] = []
+        if boot.dry_run:
+            sc = script_mod.stub(prods, c, v.angle, v.variant_index, v.hook)
+        else:
+            sc, bad = await script_mod.generate(prods, c, v.angle, others[-6:], v.hook, insights.winning_hooks(5, c.id), style)
+        update(vid, script_json=sc.model_dump_json(), hook=sc.hook, caption=script_mod.full_caption(sc, style),
+               progress=PROGRESS["script"][1],
+               step=f"Uyarı: yasaklı kelime ({', '.join(bad)}) — senaryoyu düzenleyin" if bad else "Senaryo hazır")
 
     async def _voice(self, vid: int) -> None:
         v, c, _ = load(vid)
@@ -209,32 +228,38 @@ class Runner:
         text = " ".join([sc.hook, *(s.voiceover for s in sc.scenes), sc.cta])
         await self._progress(vid, "voice", 0.2, "Seslendirme")
         out = paths.video_dir(vid)
-        res = await tts.synthesize(text, out / "voice.mp3", c.language, c.voice_id or None, boot.dry_run)
+        voice_id = c.voice_id or brandkit.resolve(c).voice_id or None
+        res = await tts.synthesize(text, out / "voice.mp3", c.language, voice_id, boot.dry_run)
         (out / "words.json").write_text(json.dumps(
             {"duration": res.duration, "words": [w.__dict__ for w in res.words]}, ensure_ascii=False))
         tl_mod.build(sc, res.words, res.duration, cfg.end_card_seconds).save(out / "timeline.json")
         update(vid, tts_chars=v.tts_chars + (0 if boot.dry_run else len(text)))
 
     async def _visuals(self, vid: int) -> None:
-        v, c, p = load(vid)
+        v, c, _ = load(vid)
         sc = script_mod.AdScript.model_validate_json(v.script_json)
         out = paths.video_dir(vid)
         for pat in ("scene_*", "clip_*", "bg_*", "ref_*", "vo_*"):
             for f in out.glob(pat):
                 f.unlink()
-        cut = None
-        if config.get().product_mode != "off" and any(s.shot in script_mod.PRODUCT_SHOTS for s in sc.scenes):
-            await self._progress(vid, "visuals", 0.01, "Ürün kesiliyor")
-            try:
-                cut = await product_mod.cutout(p)
-            except Exception as e:  # unusable photo: fall back to generated product shots
-                log.warning("cutout failed for product %s: %s", p.id, e)
+        prods = campaign_products(c)
+        cuts: list[Path | None] = [None] * len(prods)
+        used = {s.product_ref for s in sc.scenes if s.shot in script_mod.PRODUCT_SHOTS}
+        if config.get().product_mode != "off" and used:
+            await self._progress(vid, "visuals", 0.01, "Ürünler kesiliyor")
+            for i in sorted(used):
+                if i >= len(prods):
+                    continue
+                try:
+                    cuts[i] = await product_mod.cutout(prods[i])
+                except Exception as e:  # unusable photo: fall back to generated product shots
+                    log.warning("cutout failed for product %s: %s", prods[i].id, e)
         n = len(sc.scenes)
 
         async def prog(f: float) -> None:
             await self._progress(vid, "visuals", f, f"ComfyUI sahne {min(int(f * n) + 1, n)}/{n}")
 
-        media = await visuals.generate(sc, out, c, cut, tl_mod.Timeline.load(out / "timeline.json"),
+        media = await visuals.generate(sc, out, c, cuts, tl_mod.Timeline.load(out / "timeline.json"),
                                        out / "voice.mp3", boot.dry_run, prog)
         (out / "media.json").write_text(json.dumps([m.name for m in media]))
 
@@ -252,41 +277,66 @@ class Runner:
 
         durs = tl.scene_durations
         segs = [Segment(scene_media[i], durs[i]) for i in range(len(sc.scenes))]
-        price = f"{p.price:,.2f} {p.currency}".replace(",", "X").replace(".", ",").replace("X", ".") if p.price else ""
-        product_img = Path(p.image_path) if p.image_path else None
+        style = brandkit.resolve(c)
+        prods = campaign_products(c) or [p]
+        multi = c.kind == "collection" and len(prods) > 1
         stills = [f for f in scene_media if f.suffix == ".png"]
-        card = graphics.end_card(out / "endcard.png", stills[-1] if stills else None, product_img, p.name, price,
-                                 cfg.cta_default, cfg.brand_name)
-        segs.append(Segment(card, max(0.6, tl.total - sum(s.duration for s in segs))))
+        token = graphics.FONT_OVERRIDE.set(style.font_path)
+        try:
+            if multi:
+                items = [(Path(x.cutout_path or x.image_path) if (x.cutout_path or x.image_path) else None, x.name, fmt_price(x))
+                         for x in prods]
+                title = sc.hook if len(sc.hook) <= 40 else f"{len(prods)} ürün"
+                card = graphics.collection_card(out / "endcard.png", stills[-1] if stills else None, items, title,
+                                                style.cta, style.name, style.primary, style.accent, style.logo)
+            else:
+                card = graphics.end_card(out / "endcard.png", stills[-1] if stills else None,
+                                         Path(p.image_path) if p.image_path else None, p.name, fmt_price(p),
+                                         style.cta, style.name, style.primary, style.accent, style.logo)
+            segs.append(Segment(card, max(0.6, tl.total - sum(s.duration for s in segs))))
 
-        headlines, t = [], 0.0
-        hero_at: tuple[float, float] | None = None
-        for i, s in enumerate(segs[:-1]):
-            text = sc.scenes[i].on_screen_text
-            if i == 0 and len(sc.hook.split()) <= 6:
-                text = sc.hook
-            headlines.append((t + 0.05, t + s.duration - 0.05, text))
-            if hero_at is None and sc.scenes[i].shot == "product_hero":
-                hero_at = (t + 0.3, t + s.duration - 0.05)
-            t += s.duration
+            headlines, overlays, t = [], [], 0.0
+            badge_done: set[int] = set()
+            for i, s in enumerate(segs[:-1]):
+                scn = sc.scenes[i]
+                text = scn.on_screen_text
+                if i == 0 and len(sc.hook.split()) <= 6 and not multi:
+                    text = sc.hook
+                headlines.append((t + 0.05, t + s.duration - 0.05, text))
+                ref = min(scn.product_ref, len(prods) - 1)
+                wants = scn.shot in script_mod.PRODUCT_SHOTS and (multi or scn.shot == "product_hero")
+                if cfg.price_badge and wants and ref not in badge_done and fmt_price(prods[ref]):
+                    badge_done.add(ref)
+                    badge = graphics.price_badge(out / f"badge_{ref}.png", fmt_price(prods[ref]),
+                                                 prods[ref].platform, style.accent)
+                    overlays.append(Overlay(badge, t + 0.3, t + s.duration - 0.05))
+                t += s.duration
+            if style.logo:
+                overlays.insert(0, Overlay(graphics.logo_watermark(out / "logo.png", style.logo), 0.0, tl.total, "44", "48"))
+        finally:
+            graphics.FONT_OVERRIDE.reset(token)
         hook_end = len(sc.hook.split())
-        ass = subtitles.build(words, headlines, out / "subs.ass", cfg.subtitle_font, cfg.subtitle_highlight, c.language,
+        ass = subtitles.build(words, headlines, out / "subs.ass", style.font_name, style.highlight_hex, c.language,
                               cfg.caption_style, words[hook_end - 1].end + 0.01 if 0 < hook_end <= len(words) else 0.0)
-
-        overlays = []
-        if cfg.price_badge and price and hero_at:
-            overlays.append(Overlay(graphics.price_badge(out / "badge.png", price, p.platform), *hero_at))
-        fx = Effects(punch=cfg.hook_punch, progress_color=cfg.subtitle_highlight if cfg.progress_bar else None,
+        fx = Effects(punch=cfg.hook_punch, progress_color=style.highlight_hex if cfg.progress_bar else None,
                      sfx_volume=cfg.sfx_volume, overlays=overlays)
         await self._progress(vid, "compose", 0.15, "FFmpeg montaj")
         final = out / f"adforge_{vid}.mp4"
         await compose(segs, out / "voice.mp3", ass, final, out, pick_music(c.music), cfg.music_volume, fx)
         first = scene_media[0] if scene_media[0].suffix == ".png" else (stills[0] if stills else card)
         thumb = graphics.thumbnail(out / "thumb.jpg", first, sc.hook)
-        (out / "caption.txt").write_text(
-            f"{sc.title}\n\n{v.caption}\n\n{tracking_url(p, v.subid)}".strip(), encoding="utf-8")
+        links = [(x, tracking_url(x, product_subid(v.subid, x, multi))) for x in prods]
+        link_txt = "\n".join(f"{x.name}: {u}" if multi else u for x, u in links if u)
+        (out / "caption.txt").write_text(f"{sc.title}\n\n{v.caption}\n\n{link_txt}".strip(), encoding="utf-8")
+        (out / "links.txt").write_text("\n".join(f"{x.name}\t{u}" for x, u in links), encoding="utf-8")
         update(vid, status=VideoStatus.done, progress=100, step="Hazır", video_path=str(final), thumb_path=str(thumb),
                duration=round(tl.total, 2))
+
+
+def fmt_price(p: Product) -> str:
+    if not p.price:
+        return ""
+    return f"{p.price:,.2f} {p.currency}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def pick_music(choice: str) -> Path | None:

@@ -1,18 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BadgeDollarSign, Bot, CalendarDays, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
+  BadgeDollarSign, Bot, Building2, CalendarDays, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
   Settings, Sparkles, Sun, X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { cn, gb } from "@/lib/utils";
+import BrandSwitcher from "./BrandSwitcher";
 import { Dot } from "./ui";
 
 const NAV = [
   { to: "/", label: "Genel Bakış", icon: LayoutDashboard },
   { to: "/studio", label: "Stüdyo", icon: Sparkles, accent: true },
+  { to: "/brands", label: "Firmalar", icon: Building2 },
   { to: "/products", label: "Ürünler", icon: Package },
   { to: "/campaigns", label: "Kampanyalar", icon: Clapperboard },
   { to: "/queue", label: "Üretim Kuyruğu", icon: ListVideo },
@@ -164,6 +166,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line/60 bg-bg/70 px-4 backdrop-blur-xl sm:px-8">
           <button className="rounded-lg p-2 text-muted hover:bg-elev lg:hidden" onClick={() => setMobile(true)}><Menu className="h-5 w-5" /></button>
+          <BrandSwitcher />
           <button onClick={() => setPalette(true)} className="flex h-10 w-full max-w-sm items-center gap-3 rounded-xl border border-line bg-elev/50 px-3 text-sm text-muted transition hover:border-brand/40">
             <Command className="h-4 w-4" /><span className="flex-1 text-left">Ara veya git…</span>
             <kbd className="hidden rounded-md border border-line px-1.5 text-[10px] sm:block">Ctrl K</kbd>

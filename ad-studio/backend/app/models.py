@@ -29,6 +29,32 @@ class VideoStatus(str, Enum):
 ACTIVE = {VideoStatus.queued, VideoStatus.scripting, VideoStatus.visuals, VideoStatus.voice, VideoStatus.composing}
 
 
+class Brand(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    logo_path: str | None = None
+    primary_color: str = "#8B5CF6"
+    accent_color: str = "#FFD400"
+    font_file: str = ""  # file in data/fonts
+    voice_id: str = ""
+    tone: str = ""
+    audience: str = ""
+    guidelines: str = ""
+    banned_words: str = ""  # comma separated
+    must_say: str = ""
+    cta: str = ""
+    ad_disclosure: str = ""
+    hashtag: str = ""
+    website: str = ""
+    contact_name: str = ""
+    contact_email: str = ""
+    monthly_fee: float = 0
+    per_video_fee: float = 0
+    currency: str = "TRY"
+    active: bool = True
+    created_at: NaiveDatetime = Field(default_factory=now)
+
+
 class Product(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
@@ -39,6 +65,7 @@ class Product(SQLModel, table=True):
     affiliate_url: str = ""  # may contain {subid}
     platform: str = ""  # Trendyol, Amazon, Hepsiburada...
     commission_rate: float | None = None  # %
+    brand_id: int | None = Field(default=None, foreign_key="brand.id", index=True)
     image_path: str | None = None
     cutout_path: str | None = None
     active: bool = True  # autopilot pool
@@ -47,7 +74,10 @@ class Product(SQLModel, table=True):
 
 class Campaign(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    product_id: int = Field(foreign_key="product.id", index=True)
+    product_id: int = Field(foreign_key="product.id", index=True)  # first product (back-compat)
+    brand_id: int | None = Field(default=None, foreign_key="brand.id", index=True)
+    kind: str = "single"  # single | collection
+    collection_type: str = ""  # top_list | bundle | comparison | sale | gift_guide
     name: str
     language: str = "tr"
     tone: str = "enerjik"
@@ -76,6 +106,8 @@ class Video(SQLModel, table=True):
     hook_score: float | None = None
     stage_done: str = ""  # last completed stage, for resume
     yt_id: str = ""
+    approval: str = "draft"  # draft | sent | approved | revision
+    approval_note: str = ""
     script_json: str = ""
     caption: str = ""
     status: VideoStatus = VideoStatus.queued
@@ -103,12 +135,35 @@ class RevenueEntry(SQLModel, table=True):
     day: date = Field(default_factory=date.today, index=True)
     video_id: int | None = Field(default=None, foreign_key="video.id", index=True)
     campaign_id: int | None = Field(default=None, foreign_key="campaign.id", index=True)
+    product_id: int | None = Field(default=None, foreign_key="product.id", index=True)
+    brand_id: int | None = Field(default=None, foreign_key="brand.id", index=True)
+    kind: str = "affiliate"  # affiliate | fee
     platform: str = ""
     amount: float = 0
     clicks: int = 0
     conversions: int = 0
     views: int = 0
     note: str = ""
+
+
+class CampaignProduct(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.id", index=True)
+    product_id: int = Field(foreign_key="product.id", index=True)
+    position: int = 0
+
+
+class BrandCharge(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    brand_id: int = Field(foreign_key="brand.id", index=True)
+    period: str = Field(index=True)  # YYYY-MM
+    kind: str = "monthly"  # monthly | per_video | extra
+    quantity: int = 1
+    amount: float = 0
+    paid: bool = False
+    paid_at: NaiveDatetime | None = None
+    note: str = ""
+    created_at: NaiveDatetime = Field(default_factory=now)
 
 
 class VideoStat(SQLModel, table=True):
@@ -128,6 +183,10 @@ class AutopilotRule(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = "Otopilot"
     enabled: bool = True
+    brand_id: int | None = None
+    kind: str = "single"
+    collection_type: str = "top_list"
+    products_per_video: int = 3
     product_ids: str = ""  # comma separated; empty = all active products
     videos_per_day: int = 3
     run_hour: int = 2  # local hour to start production

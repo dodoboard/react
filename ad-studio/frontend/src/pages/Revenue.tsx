@@ -4,14 +4,16 @@ import { useRef, useState } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { Button, Field, Modal, PageHeader, Pill } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api } from "@/lib/api";
 import { cn, money, num } from "@/lib/utils";
 
 export default function RevenuePage() {
   const qc = useQueryClient();
-  const { data: rows } = useQuery({ queryKey: ["revenue"], queryFn: api.revenue });
-  const { data: s } = useQuery({ queryKey: ["summary"], queryFn: () => api.summary(30) });
-  const { data: vids } = useQuery({ queryKey: ["videos", "library"], queryFn: () => api.videos("?status=done&limit=500") });
+  const { brandId } = useBrand();
+  const { data: rows } = useQuery({ queryKey: ["revenue", brandId], queryFn: () => api.revenue(brandId) });
+  const { data: s } = useQuery({ queryKey: ["summary", 30, brandId], queryFn: () => api.summary(30, brandId) });
+  const { data: vids } = useQuery({ queryKey: ["videos", "library", brandId], queryFn: () => api.videos("?status=done&limit=500", brandId) });
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ day: new Date().toISOString().slice(0, 10), video_id: "", platform: "", amount: "", clicks: "", conversions: "", views: "", note: "" });
   const fileRef = useRef<HTMLInputElement>(null);
@@ -83,11 +85,12 @@ export default function RevenuePage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-elev/30 text-left text-xs uppercase tracking-wider text-muted">
-              {["Tarih", "Video", "Kampanya", "Platform", "Tıklama", "Satış", "Tutar", ""].map((h) => <th key={h} className="px-5 py-2.5 font-medium">{h}</th>)}</tr></thead>
+              {["Tarih", "Firma", "Video / ürün", "Kampanya", "Platform", "Tıklama", "Satış", "Tutar", ""].map((h) => <th key={h} className="px-5 py-2.5 font-medium">{h}</th>)}</tr></thead>
             <tbody>
               {rows?.map((r) => (
                 <tr key={r.id} className="border-t border-line/50">
-                  <td className="px-5 py-3 font-mono text-xs">{r.day}</td><td className="px-5 py-3">{r.video_label ?? "—"}</td>
+                  <td className="px-5 py-3 font-mono text-xs">{r.day}</td><td className="px-5 py-3">{r.brand_name ?? "—"}</td>
+                  <td className="px-5 py-3">{r.video_label ?? "—"}{r.product_name && <div className="text-xs text-muted">{r.product_name}</div>}</td>
                   <td className="max-w-[200px] truncate px-5 py-3 text-muted">{r.campaign_name ?? "—"}</td><td className="px-5 py-3">{r.platform || "—"}</td>
                   <td className="px-5 py-3">{num(r.clicks)}</td><td className="px-5 py-3">{num(r.conversions)}</td>
                   <td className="px-5 py-3 font-semibold text-emerald-500">{money(r.amount, cur)}</td>

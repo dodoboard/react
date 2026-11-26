@@ -90,7 +90,7 @@ async def _i2v(img: Path, prompt: str, dur: float, i: int, out_dir: Path, prog: 
     return (await comfy.run(graph, out_dir, f"clip_{i}", prog))[0]
 
 
-async def generate(script: AdScript, out_dir: Path, campaign: Campaign, cutout: Path | None, tl: Timeline,
+async def generate(script: AdScript, out_dir: Path, campaign: Campaign, cutouts: list[Path | None], tl: Timeline,
                    voice: Path, dry_run: bool, on_progress: Progress) -> list[Path]:
     cfg = config.get()
     n = len(script.scenes)
@@ -111,6 +111,7 @@ async def generate(script: AdScript, out_dir: Path, campaign: Campaign, cutout: 
             res = await _presenter(i, avatar, tl.scene_span(i), voice, out_dir, dry_run, prog_at(0, 1))
             results.append(res)
             continue
+        cutout = cutouts[min(sc.product_ref, len(cutouts) - 1)] if cutouts else None
         if sc.shot in PRODUCT_SHOTS and cutout and cfg.product_mode != "off":
             img = await _product_shot(sc, i, campaign.visual_style, cutout, out_dir, dry_run, prog_at(0, w_img))
         elif dry_run:

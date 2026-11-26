@@ -8,12 +8,13 @@ import { Button, Empty, Field, Modal, PageHeader, Pill, Toggle } from "@/compone
 import { api, type Rule } from "@/lib/api";
 import { cn, PLATFORMS } from "@/lib/utils";
 
-const BLANK: Partial<Rule> = { name: "Gece üretimi", enabled: true, product_ids: [], videos_per_day: 3, run_hour: 2, platform: "tiktok",
+const BLANK: Partial<Rule> = { name: "Gece üretimi", enabled: true, brand_id: null, kind: "single", collection_type: "top_list", products_per_video: 3, product_ids: [], videos_per_day: 3, run_hour: 2, platform: "tiktok",
   language: "tr", format: "broll", avatar: "", i2v_mode: "off", auto_schedule: true };
 
 function RuleForm({ initial, open, onClose }: { initial: Partial<Rule> | null; open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const { data: products } = useQuery({ queryKey: ["products"], queryFn: api.products });
+  const { data: allProducts } = useQuery({ queryKey: ["products"], queryFn: () => api.products() });
+  const { data: brands } = useQuery({ queryKey: ["brands"], queryFn: api.brands });
   const [r, setR] = useState<Partial<Rule>>(BLANK);
   useEffect(() => { if (open) setR(initial ?? BLANK); }, [open, initial]);
   const save = useMutation({
@@ -22,12 +23,22 @@ function RuleForm({ initial, open, onClose }: { initial: Partial<Rule> | null; o
     onError: (e: Error) => toast.error(e.message),
   });
   const ids = r.product_ids ?? [];
+  const products = (allProducts ?? []).filter((p) => !r.brand_id || p.brand_id === r.brand_id);
   return (
     <Modal open={open} onClose={onClose} wide title={r.id ? "Otopilotu düzenle" : "Yeni otopilot"}
       footer={<><Button variant="ghost" onClick={onClose}>Vazgeç</Button><Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Kaydet</Button></>}>
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4">
           <Field label="Ad"><input className="input" value={r.name} onChange={(e) => setR({ ...r, name: e.target.value })} /></Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Firma"><select className="input" value={r.brand_id ?? ""} onChange={(e) => setR({ ...r, brand_id: e.target.value ? Number(e.target.value) : null, product_ids: [] })}>
+              <option value="">Tüm firmalar</option>{brands?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+            <Field label="Video tipi"><select className="input" value={r.kind === "collection" ? r.collection_type : "single"}
+              onChange={(e) => setR(e.target.value === "single" ? { ...r, kind: "single" } : { ...r, kind: "collection", collection_type: e.target.value })}>
+              <option value="single">Tek ürün</option><option value="top_list">Çok ürün · Top liste</option><option value="bundle">Çok ürün · Kombin</option>
+              <option value="sale">Çok ürün · İndirim vitrini</option><option value="gift_guide">Çok ürün · Hediye rehberi</option><option value="comparison">Çok ürün · Karşılaştırma</option></select></Field>
+          </div>
+          {r.kind === "collection" && <Field label={`Video başına ürün: ${r.products_per_video}`}><input type="range" min={2} max={6} value={r.products_per_video} onChange={(e) => setR({ ...r, products_per_video: +e.target.value })} className="w-full accent-violet-500" /></Field>}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Günlük video"><input type="number" min={1} max={30} className="input" value={r.videos_per_day} onChange={(e) => setR({ ...r, videos_per_day: +e.target.value })} /></Field>
             <Field label="Üretim saati" hint="GPU boşken (gece)"><select className="input" value={r.run_hour} onChange={(e) => setR({ ...r, run_hour: +e.target.value })}>
@@ -43,7 +54,7 @@ function RuleForm({ initial, open, onClose }: { initial: Partial<Rule> | null; o
           <div>
             <span className="label">Ürün havuzu ({ids.length ? `${ids.length} seçili` : "tüm aktif ürünler"})</span>
             <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-              {products?.map((p) => (
+              {products.map((p) => (
                 <button key={p.id} type="button" onClick={() => setR({ ...r, product_ids: ids.includes(p.id) ? ids.filter((x) => x !== p.id) : [...ids, p.id] })}
                   className={cn("flex items-center gap-2 rounded-xl border p-2 text-left text-xs transition", ids.includes(p.id) ? "border-brand bg-brand/10" : "border-line bg-elev/30 hover:border-brand/40")}>
                   <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-white">{p.image_url && <img src={p.image_url} className="h-full w-full object-contain" />}</div>
@@ -63,6 +74,7 @@ function RuleForm({ initial, open, onClose }: { initial: Partial<Rule> | null; o
 export default function Autopilot() {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
+  const { data: brands } = useQuery({ queryKey: ["brands"], queryFn: api.brands });
   const [edit, setEdit] = useState<Partial<Rule> | null>(null);
   const [open, setOpen] = useState(false);
   const run = useMutation({ mutationFn: api.runRule, onSuccess: (r) => { toast.success(`${r.campaigns.length} kampanya başlatıldı`); qc.invalidateQueries({ queryKey: ["rules"] }); }, onError: (e: Error) => toast.error(e.message) });
@@ -90,6 +102,8 @@ export default function Autopilot() {
             <div className="mt-4 flex flex-wrap gap-1.5">
               <Pill>{r.videos_per_day} video/gün</Pill><Pill>{PLATFORMS.find((p) => p.id === r.platform)?.label}</Pill>
               <Pill>{FORMATS.find((f) => f.id === r.format)?.label}</Pill>
+              {r.kind === "collection" && <Pill>{r.products_per_video} ürün/video</Pill>}
+              {r.brand_id && <Pill className="text-brand">{brands?.find((b) => b.id === r.brand_id)?.name}</Pill>}
               <Pill>{r.product_ids.length ? `${r.product_ids.length} ürün` : "Tüm ürünler"}</Pill>
               {r.i2v_mode !== "off" && <Pill>i2v: {r.i2v_mode === "hook" ? "hook" : "tümü"}</Pill>}
               {r.auto_schedule && <Pill className="text-sky-500">Oto-plan</Pill>}

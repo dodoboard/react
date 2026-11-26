@@ -11,15 +11,20 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..config import paths
-from ..models import ACTIVE, Campaign, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
+from ..models import ACTIVE, Brand, Campaign, CampaignProduct, Product, RevenueEntry, Video, VideoStat, VideoStatus, session
 from ..pipeline import insights, script as script_mod
-from ..pipeline.runner import STAGES, load, new_subid, runner, tracking_url, update, video_dict
+from ..pipeline.runner import (STAGES, campaign_products, load, new_subid, product_subid, runner, tracking_url, update,
+                               video_dict)
 
 router = APIRouter(prefix="/api", tags=["campaigns"])
 
 
 class CampaignIn(BaseModel):
-    product_id: int
+    product_id: int = 0
+    product_ids: list[int] = []  # collection (ordered); product_id used when empty
+    kind: str = "single"
+    collection_type: str = "top_list"
+    brand_id: int | None = None
     name: str = ""
     language: str = "tr"
     tone: str = "enerjik"
@@ -42,10 +47,13 @@ class CampaignIn(BaseModel):
 def campaign_dict(c: Campaign, s) -> dict:
     vids = s.query(Video).filter(Video.campaign_id == c.id).all()
     p = s.get(Product, c.product_id)
+    b = s.get(Brand, c.brand_id) if c.brand_id else None
     rev = sum(r.amount for r in s.query(RevenueEntry).filter(
         (RevenueEntry.campaign_id == c.id) | (RevenueEntry.video_id.in_([v.id for v in vids]))).all()) if vids else 0
     return c.model_dump() | {
         "product": {"id": p.id, "name": p.name, "image_url": paths.url(p.image_path)} if p else None,
+        "products": [{"id": x.id, "name": x.name, "image_url": paths.url(x.image_path)} for x in campaign_products(c)],
+        "brand": {"id": b.id, "name": b.name, "logo_url": paths.url(b.logo_path), "color": b.primary_color} if b else None,
         "counts": {st.value: sum(1 for v in vids if v.status == st) for st in VideoStatus},
         "total": len(vids), "revenue": rev,
         "thumb_url": next((paths.url(v.thumb_path) for v in vids if v.thumb_path), None),
@@ -53,9 +61,12 @@ def campaign_dict(c: Campaign, s) -> dict:
 
 
 @router.get("/campaigns")
-def list_campaigns() -> list[dict]:
+def list_campaigns(brand_id: int | None = None) -> list[dict]:
     with session() as s:
-        return [campaign_dict(c, s) for c in s.query(Campaign).order_by(Campaign.created_at.desc()).all()]
+        q = s.query(Campaign)
+        if brand_id:
+            q = q.filter(Campaign.brand_id == brand_id)
+        return [campaign_dict(c, s) for c in q.order_by(Campaign.created_at.desc()).all()]
 
 
 @router.get("/campaigns/{cid}")
@@ -76,13 +87,35 @@ def create_campaign_service(body: CampaignIn, autopilot_id: int | None = None) -
         raise HTTPException(422, "Geçersiz format")
     if body.format != "broll" and not body.avatar:
         raise HTTPException(422, "Avatar formatı için persona seçin")
+    ids_in = list(dict.fromkeys(body.product_ids or [body.product_id]))
+    if body.kind == "collection" and not 2 <= len(ids_in) <= 6:
+        raise HTTPException(422, "Çok ürünlü video için 2-6 ürün seçin")
+    if body.kind != "collection":
+        ids_in = ids_in[:1]
     with session() as s:
-        p = s.get(Product, body.product_id) or _404()
-        c = Campaign(**body.model_dump(exclude={"angles", "auto_render"}), autopilot_id=autopilot_id)
-        c.name = c.name or f"{p.name} · {datetime.now():%d.%m %H:%M}"
+        prods = [s.get(Product, i) for i in ids_in]
+        if not prods or not all(prods):
+            _404()
+        p = prods[0]
+        brand_id = body.brand_id or p.brand_id
+        b = s.get(Brand, brand_id) if brand_id else None
+        data = body.model_dump(exclude={"angles", "auto_render", "product_ids", "product_id", "brand_id"})
+        if b:  # brand defaults fill empty campaign fields
+            if b.tone and body.tone in ("", "enerjik"):  # "enerjik" is the form default
+                data["tone"] = b.tone
+            data["audience"] = data["audience"] or b.audience
+            data["voice_id"] = data["voice_id"] or b.voice_id
+        c = Campaign(**data, product_id=p.id, brand_id=brand_id, autopilot_id=autopilot_id)
+        if c.kind == "collection":
+            c.scenes = len(prods)
+        label = p.name if c.kind != "collection" else f"{len(prods)} ürün ({b.name if b else p.name})"
+        c.name = c.name or f"{label} · {datetime.now():%d.%m %H:%M}"
         s.add(c)
         s.commit()
         s.refresh(c)
+        for pos, x in enumerate(prods):
+            s.add(CampaignProduct(campaign_id=c.id, product_id=x.id, position=pos))
+        s.commit()
         known = {a[0] for a in script_mod.ANGLES}
         chosen = [a for a in body.angles if a in known]
         angles = [chosen[i % len(chosen)] for i in range(body.variants)] if chosen \
@@ -117,6 +150,8 @@ def delete_campaign(cid: int) -> dict:
             raise HTTPException(409, "Kampanyada çalışan işler var.")
         for v in vids:
             _drop_video(s, v)
+        for l in s.query(CampaignProduct).filter(CampaignProduct.campaign_id == cid).all():
+            s.delete(l)
         s.delete(s.get(Campaign, cid) or _404())
         s.commit()
     return {"ok": True}
@@ -124,9 +159,14 @@ def delete_campaign(cid: int) -> dict:
 
 # ---------- videos ----------
 @router.get("/videos")
-def list_videos(status: str | None = None, campaign_id: int | None = None, limit: int = 200) -> list[dict]:
+def list_videos(status: str | None = None, campaign_id: int | None = None, brand_id: int | None = None,
+                approval: str | None = None, limit: int = 200) -> list[dict]:
     with session() as s:
         q = s.query(Video)
+        if brand_id:
+            q = q.filter(Video.campaign_id.in_([c.id for c in s.query(Campaign).filter(Campaign.brand_id == brand_id).all()]))
+        if approval:
+            q = q.filter(Video.approval.in_(approval.split(",")))
         if status:
             q = q.filter(Video.status.in_(status.split(",")))
         if campaign_id:
@@ -137,16 +177,30 @@ def list_videos(status: str | None = None, campaign_id: int | None = None, limit
         views: dict[int, int] = {}
         for st in s.query(VideoStat).filter(VideoStat.video_id.in_([v.id for v in vids])).all():
             views[st.video_id] = views.get(st.video_id, 0) + st.views
-        return [video_dict(v) | {"views": views.get(v.id),"campaign_name": camps[v.campaign_id].name,
-                                 "product_name": prods[camps[v.campaign_id].product_id].name,
-                                 "tracking_url": tracking_url(prods[camps[v.campaign_id].product_id], v.subid)}
-                for v in vids]
+        brands = {b.id: b for b in s.query(Brand).all()}
+    out = []
+    for v in vids:
+        c = camps[v.campaign_id]
+        b = brands.get(c.brand_id)
+        out.append(video_dict(v) | {
+            "views": views.get(v.id), "campaign_name": c.name, "product_name": prods[c.product_id].name,
+            "tracking_url": tracking_url(prods[c.product_id], v.subid) if c.kind != "collection" else "",
+            "kind": c.kind, "product_count": len(campaign_products(c)) if c.kind == "collection" else 1,
+            "brand": {"id": b.id, "name": b.name, "logo_url": paths.url(b.logo_path), "color": b.primary_color} if b else None})
+    return out
 
 
 @router.get("/videos/{vid}")
 def get_video(vid: int) -> dict:
     v, c, p = load(vid)
-    return video_dict(v) | {"campaign_name": c.name, "product_name": p.name, "tracking_url": tracking_url(p, v.subid)}
+    return video_dict(v) | {"campaign_name": c.name, "product_name": p.name, "tracking_url": tracking_url(p, v.subid),
+                            "links": video_links(v, c)}
+
+
+def video_links(v: Video, c: Campaign) -> list[dict]:
+    prods = campaign_products(c)
+    multi = c.kind == "collection" and len(prods) > 1
+    return [{"product_id": x.id, "name": x.name, "url": tracking_url(x, product_subid(v.subid, x, multi))} for x in prods]
 
 
 @router.put("/videos/{vid}/script")
@@ -201,6 +255,8 @@ def cancel(vid: int) -> dict:
 
 class VideoPatch(BaseModel):
     ab_label: str | None = None
+    approval: str | None = None
+    approval_note: str | None = None
     favorite: bool | None = None
     platform: str | None = None
     scheduled_at: datetime | None = None
@@ -212,6 +268,8 @@ class VideoPatch(BaseModel):
 
 @router.patch("/videos/{vid}")
 def patch_video(vid: int, body: VideoPatch) -> dict:
+    if body.approval is not None and body.approval not in ("draft", "sent", "approved", "revision"):
+        raise HTTPException(422, "Geçersiz onay durumu")
     kw = body.model_dump(exclude_none=True, exclude={"clear_schedule"})
     if body.publish_url is not None:
         from .youtube import yt_id_from_url
@@ -241,7 +299,7 @@ def package(vid: int) -> StreamingResponse:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
         z.write(v.video_path, f"{_slug(p.name)}_{v.ab_label}.mp4")
-        for name in ("caption.txt", "thumb.jpg"):
+        for name in ("caption.txt", "thumb.jpg", "links.txt"):
             if (d / name).exists():
                 z.write(d / name, name)
         if v.script_json:

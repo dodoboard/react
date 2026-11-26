@@ -1,4 +1,3 @@
-import json
 import time
 
 from fastapi.testclient import TestClient
@@ -48,7 +47,7 @@ def test_full_dry_run_pipeline():
         assert all(v["status"] == "done" for v in vids), [v["error"] for v in vids]
         from app.config import paths as P2
         d = P2.video_dir(vids[0]["id"])
-        assert (d / "badge.png").exists() and (d / "timeline.json").exists()
+        assert (d / "badge_0.png").exists() and (d / "timeline.json").exists()
         assert any(n.startswith("scene_") for n in __import__("json").loads((d / "media.json").read_text()))
 
         v = c.get(f"/api/videos/{vids[0]['id']}").json()

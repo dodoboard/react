@@ -3,10 +3,12 @@ import { Film, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { VideoCard, VideoModal } from "@/components/VideoCard";
 import { Empty, PageHeader, Segmented, Skeleton } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api } from "@/lib/api";
 
 export default function Library() {
-  const { data } = useQuery({ queryKey: ["videos", "library"], queryFn: () => api.videos("?status=done&limit=500") });
+  const { brandId } = useBrand();
+  const { data } = useQuery({ queryKey: ["videos", "library", brandId], queryFn: () => api.videos("?status=done&limit=500", brandId) });
   const [q, setQ] = useState("");
   const [f, setF] = useState<"all" | "fav" | "unpub" | "pub">("all");
   const [open, setOpen] = useState<number | null>(null);

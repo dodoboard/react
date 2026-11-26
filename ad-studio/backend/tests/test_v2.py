@@ -2,7 +2,7 @@ import random
 import sqlite3
 from datetime import date, datetime
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageDraw
 
 from app.models import Campaign, engine, migrate
 from app.pipeline import insights, product, script, timeline
@@ -24,7 +24,7 @@ def test_migrate_adds_missing_columns(tmp_path):
 
 
 def test_migrate_on_old_schema(tmp_path, monkeypatch):
-    from sqlmodel import SQLModel, create_engine
+    from sqlmodel import create_engine
     import app.models as m
     old = tmp_path / "old.db"
     con = sqlite3.connect(old)

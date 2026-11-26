@@ -5,8 +5,11 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import Layout from "./components/Layout";
 import "./index.css";
+import { BrandProvider } from "./lib/brand";
 import { useLiveEvents } from "./lib/live";
 import Autopilot from "./pages/Autopilot";
+import BrandDetail from "./pages/BrandDetail";
+import Brands from "./pages/Brands";
 import Calendar from "./pages/Calendar";
 import CampaignDetail from "./pages/CampaignDetail";
 import Campaigns from "./pages/Campaigns";
@@ -27,6 +30,8 @@ function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/studio" element={<Studio />} />
+        <Route path="/brands" element={<Brands />} />
+        <Route path="/brands/:id" element={<BrandDetail />} />
         <Route path="/products" element={<Products />} />
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/campaigns/:id" element={<CampaignDetail />} />
@@ -45,7 +50,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={qc}>
       <BrowserRouter>
-        <App />
+        <BrandProvider>
+          <App />
+        </BrandProvider>
         <Toaster theme="system" position="bottom-right" richColors closeButton />
       </BrowserRouter>
     </QueryClientProvider>

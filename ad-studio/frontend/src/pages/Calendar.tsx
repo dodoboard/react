@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { VideoModal } from "@/components/VideoCard";
 import { Button, PageHeader } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api, type Video } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +14,8 @@ const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 
 export default function Calendar() {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["videos", "calendar"], queryFn: () => api.videos("?status=done&limit=500") });
+  const { brandId } = useBrand();
+  const { data } = useQuery({ queryKey: ["videos", "calendar", brandId], queryFn: () => api.videos("?status=done&limit=500", brandId) });
   const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<string | null>(null);

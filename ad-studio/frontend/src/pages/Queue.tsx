@@ -4,6 +4,7 @@ import { Ban, Check, FileText, Film, ImageIcon, ListVideo, Mic, RefreshCw } from
 import { useState } from "react";
 import { useVideoActions, VideoModal } from "@/components/VideoCard";
 import { Button, Empty, PageHeader, Progress, Segmented, StatusBadge } from "@/components/ui";
+import { useBrand } from "@/lib/brand";
 import { api, type VideoStatus } from "@/lib/api";
 import { ago, cn, STATUS } from "@/lib/utils";
 
@@ -38,9 +39,10 @@ function Stages({ status }: { status: VideoStatus }) {
 }
 
 export default function Queue() {
+  const { brandId } = useBrand();
   const [filter, setFilter] = useState<"active" | "failed" | "all">("active");
   const q = filter === "active" ? "?status=queued,scripting,visuals,voice,composing" : filter === "failed" ? "?status=failed,cancelled" : "?limit=100";
-  const { data } = useQuery({ queryKey: ["videos", "queue", filter], queryFn: () => api.videos(q), refetchInterval: 15_000 });
+  const { data } = useQuery({ queryKey: ["videos", "queue", filter, brandId], queryFn: () => api.videos(q, brandId), refetchInterval: 15_000 });
   const { data: h } = useQuery({ queryKey: ["health"], queryFn: api.health });
   const a = useVideoActions();
   const [open, setOpen] = useState<number | null>(null);
