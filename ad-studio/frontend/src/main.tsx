@@ -11,6 +11,9 @@ import Autopilot from "./pages/Autopilot";
 import BrandDetail from "./pages/BrandDetail";
 import Brands from "./pages/Brands";
 import Calendar from "./pages/Calendar";
+import ChannelDetail from "./pages/ChannelDetail";
+import Channels from "./pages/Channels";
+import Characters from "./pages/Characters";
 import CampaignDetail from "./pages/CampaignDetail";
 import Campaigns from "./pages/Campaigns";
 import Dashboard from "./pages/Dashboard";
@@ -40,6 +43,9 @@ function App() {
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/revenue" element={<RevenuePage />} />
         <Route path="/autopilot" element={<Autopilot />} />
+        <Route path="/channels" element={<Channels />} />
+        <Route path="/channels/:id" element={<ChannelDetail />} />
+        <Route path="/characters" element={<Characters />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

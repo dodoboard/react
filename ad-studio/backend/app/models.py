@@ -200,6 +200,105 @@ class AutopilotRule(SQLModel, table=True):
     created_at: NaiveDatetime = Field(default_factory=now)
 
 
+class Character(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    persona: str = ""
+    speaking_style: str = ""
+    catchphrases: str = ""
+    opening_line: str = ""
+    closing_line: str = ""
+    look_prompt: str = ""
+    avatar: str = ""  # file in media/avatars
+    voice_id: str = ""
+    language: str = "tr"
+    created_at: NaiveDatetime = Field(default_factory=now)
+
+
+class Channel(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    niche: str = ""
+    language: str = "tr"
+    character_id: int | None = Field(default=None, foreign_key="character.id")
+    format: str = "both"  # long | shorts | both
+    target_minutes: float = 8
+    visual_style: str = "cinematic documentary photography, natural light, rich detail, 35mm film look"
+    music: str = ""
+    privacy: str = "public"
+    category_id: str = "27"
+    default_tags: str = ""
+    playlist_id: str = ""
+    schedule_json: str = '{"long": [["tue", 19], ["fri", 19]], "shorts": [["*", 12]]}'
+    lead_days: int = 2
+    daily_cap: int = 3
+    min_quality: float = 7.0
+    paused: bool = False
+    run_hour: int = 1
+    created_at: NaiveDatetime = Field(default_factory=now)
+
+
+class Topic(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    channel_id: int = Field(foreign_key="channel.id", index=True)
+    title: str
+    angle: str = ""
+    hook: str = ""
+    score: float = 0
+    sensitive: bool = False
+    sensitive_reason: str = ""
+    status: str = "idea"  # idea | approved | rejected | used
+    created_at: NaiveDatetime = Field(default_factory=now)
+
+
+class Episode(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    channel_id: int = Field(foreign_key="channel.id", index=True)
+    topic_id: int | None = Field(default=None, foreign_key="topic.id")
+    kind: str = "long"  # long | short
+    parent_id: int | None = None
+    status: str = "queued"
+    progress: float = 0
+    step: str = ""
+    error: str = ""
+    stage_done: str = ""
+    outline_json: str = ""
+    script_json: str = ""
+    quality_json: str = ""
+    quality_score: float | None = None
+    title: str = ""
+    description: str = ""
+    tags: str = ""
+    chapters_json: str = ""
+    video_path: str | None = None
+    thumb_path: str | None = None
+    srt_path: str | None = None
+    duration: float | None = None
+    slot_at: NaiveDatetime | None = None
+    yt_id: str = ""
+    published_at: NaiveDatetime | None = None
+    render_seconds: float = 0
+    created_at: NaiveDatetime = Field(default_factory=now)
+    updated_at: NaiveDatetime = Field(default_factory=now)
+
+
+class EpisodeStat(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    episode_id: int = Field(foreign_key="episode.id", index=True)
+    day: date = Field(index=True)
+    views: int = 0
+    avg_view_duration: float = 0
+    avg_view_pct: float = 0
+    likes: int = 0
+    subs_gained: int = 0
+
+
+class ApiQuota(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    day: date = Field(index=True, unique=True)
+    units: int = 0
+
+
 engine = create_engine(f"sqlite:///{paths.db}", connect_args={"check_same_thread": False})
 
 

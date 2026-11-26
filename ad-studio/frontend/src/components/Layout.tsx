@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BadgeDollarSign, Bot, Building2, CalendarDays, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
+  BadgeDollarSign, Bot, Building2, CalendarDays, Tv, UserRound, Clapperboard, Command, Cpu, Film, LayoutDashboard, ListVideo, Menu, Moon, Package,
   Settings, Sparkles, Sun, X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -11,7 +11,7 @@ import { cn, gb } from "@/lib/utils";
 import BrandSwitcher from "./BrandSwitcher";
 import { Dot } from "./ui";
 
-const NAV = [
+const NAV: { to: string; label: string; icon: typeof Tv; accent?: boolean; section?: string }[] = [
   { to: "/", label: "Genel Bakış", icon: LayoutDashboard },
   { to: "/studio", label: "Stüdyo", icon: Sparkles, accent: true },
   { to: "/brands", label: "Firmalar", icon: Building2 },
@@ -21,6 +21,8 @@ const NAV = [
   { to: "/library", label: "Kütüphane", icon: Film },
   { to: "/calendar", label: "Yayın Takvimi", icon: CalendarDays },
   { to: "/autopilot", label: "Otopilot", icon: Bot },
+  { to: "/channels", label: "YouTube Kanalları", icon: Tv, section: "Belgesel" },
+  { to: "/characters", label: "Karakterler", icon: UserRound },
   { to: "/revenue", label: "Gelir & ROI", icon: BadgeDollarSign },
   { to: "/settings", label: "Ayarlar", icon: Settings },
 ];
@@ -57,8 +59,10 @@ function SideNav({ onNav }: { onNav?: () => void }) {
     <div className="flex h-full flex-col gap-6 p-4">
       <Brand />
       <nav className="flex flex-1 flex-col gap-0.5">
-        {NAV.map(({ to, label, icon: Icon, accent }) => (
-          <NavLink key={to} to={to} end={to === "/"} onClick={onNav}
+        {NAV.map(({ to, label, icon: Icon, accent, section }) => (
+          <div key={to}>
+          {section && <div className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[.18em] text-muted/70">{section}</div>}
+          <NavLink to={to} end={to === "/"} onClick={onNav}
             className={({ isActive }) => cn(
               "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
               isActive ? "text-fg" : "text-muted hover:bg-elev/60 hover:text-fg",
@@ -72,6 +76,7 @@ function SideNav({ onNav }: { onNav?: () => void }) {
               </>
             )}
           </NavLink>
+          </div>
         ))}
       </nav>
       <div className="card space-y-3 p-3.5">

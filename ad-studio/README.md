@@ -19,6 +19,34 @@ Hedef donanım: RTX 5080 (16 GB VRAM) · Core Ultra 9 275HX · 32 GB RAM · Wind
 - **Yayın:** takvim (sürükle-bırak, en iyi saatlere otomatik dağıtım), yayın paketi (.zip: mp4 + caption + thumbnail), YouTube Shorts API ile direkt/zamanlanmış yükleme.
 - **Uyum:** açıklamaya otomatik `#reklam #işbirliği` ve "yapay zekâ ile üretildi" etiketi; YouTube yüklemelerinde `containsSyntheticMedia: true`.
 
+## v4 — Belgesel Kanalı (tam otomatik YouTube)
+Kendi YouTube kanal(lar)ında, sabit bir **sunucu karakterin** anlattığı belgesel bölümleri ve Shorts — konu seçiminden yayına kadar otomatik.
+
+```
+Niş ─▶ Konu havuzu (LLM + hassas konu filtresi) ─▶ Taslak ─▶ Bölüm bölüm senaryo (karakterin üslubu)
+     ─▶ Kalite jürisi (eşik altı → yeniden yaz → yine düşükse YAYINLANMAZ, incelemeye düşer)
+     ─▶ Ses (karakter sesi) ─▶ Görseller: sunucu (Wan 2.2 S2V) + belgesel b-roll (Flux 16:9, bölüm açılışlarında i2v)
+     ─▶ 16:9 montaj (çapraz geçiş, film dokusu, lower-third, müzik) + SRT + bölümler + kapak
+     ─▶ Shorts kesiti (en çarpıcı 35-58 sn, 9:16) ─▶ YouTube: publishAt ile zamanlanmış yükleme, kapak, altyazı, oynatma listesi
+```
+
+| Özellik | Ayrıntı |
+|---|---|
+| **Karakter** | Kişilik/biyografi, konuşma tarzı, imza açılış-kapanış, tutarlı görünüm prompt'u, avatar (Flux ile üret veya yükle), ses + "dinle" önizlemesi. LLM ile tek tıkla kişilik üretimi. |
+| **Kanal** | Niş, dil, format (uzun / Shorts / ikisi), süre, haftalık yayın slotları, kaç gün önceden üretileceği, günlük üretim limiti, gece üretim saati, gizlilik, oynatma listesi, kalite eşiği, durdurma anahtarı. Her kanalın kendi YouTube OAuth bağlantısı. |
+| **Güvenlik kapıları** | Hassas konu engeli (siyaset, sağlık, finans, güncel trajediler, yaşayan kişiler — "AI persona + hassas konu" para kazanamaz), tekrar konu engeli, kalite jürisi (hook / akış / özgünlük / doğruluk riski), günlük limit, API kota takibi. |
+| **YouTube** | `containsSyntheticMedia: true`, `publishAt` ile YouTube'un kendi zamanlaması, kapak (`thumbnails.set`), SRT altyazı (`captions.insert`), açıklamada otomatik bölümler (00:00…), Shorts açıklamasında tam bölüm linki; Shorts her zaman uzun bölümden **sonra** yayınlanır. |
+| **Analitik** | Bölüm başına günlük izlenme / izlenme oranı (YouTube Analytics) → en çok izlenen başlıklar yeni konu üretimine örnek olarak verilir. |
+| **GPU paylaşımı** | Reklam ve belgesel hatları tek GPU kilidiyle sırayla çalışır (VRAM çakışması yok). |
+
+**Kurulum ekleri**
+- ComfyUI: Wan 2.2 S2V modelleri (v2 tablosu) — sunucu sahneleri için. Yoksa sunucu sahneleri avatar üzerinde yavaş zoom ile üretilir.
+- `pip install -r backend/requirements-youtube.txt`, Google Cloud'da **YouTube Data API v3** + **YouTube Analytics API**, OAuth *Desktop* istemcisi → Ayarlar'dan yükle → Kanal detay → "YouTube'u bağla" (her kanal ayrı Google/marka hesabı olabilir).
+- Varsayılan API kotası günde 10.000 birim; bir bölüm yüklemesi ≈ 2.100 birim (≈4 bölüm/gün). Gerekirse Google'dan kota artışı isteyin ve Ayarlar → `youtube_daily_quota` değerini güncelleyin.
+- Uzun üretim süresi: 10 dk'lık bölüm ≈ 80-100 görsel + birkaç S2V klip → RTX 5080'de yaklaşık 30-60 dk. Gece üretim saatini buna göre seçin.
+
+> **YouTube para kazanma notu:** YouTube, şablon gibi görünen tekrarlı içerikleri ve hassas konulardaki AI personaları para kazanmaya kapatabiliyor. Sistem bunlara karşı filtreler uygular ama niş seçimi, karakterin özgünlüğü ve ilk bölümleri izleyip ayarları iyileştirmek size kalır.
+
 ## v3 — Firmalar (çok markalı ajans modu)
 | Özellik | Ne yapar | Nerede |
 |---|---|---|

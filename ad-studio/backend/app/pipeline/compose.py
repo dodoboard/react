@@ -8,7 +8,16 @@ from pathlib import Path
 from ..config import paths
 from ..media import ass_fonts_dir, encoder_args, filter_path, run_ffmpeg, video_encoder
 
-W, H, FPS = 1080, 1920, 30
+@dataclass(frozen=True)
+class Canvas:
+    w: int = 1080
+    h: int = 1920
+    fps: int = 30
+
+
+VERTICAL = Canvas()
+WIDE = Canvas(1920, 1080, 30)
+W, H, FPS = VERTICAL.w, VERTICAL.h, VERTICAL.fps
 MOTIONS = [
     ("min(zoom+0.0009,1.18)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),            # zoom in
     ("if(eq(on,0),1.18,max(zoom-0.0009,1.0))", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),  # zoom out
@@ -41,11 +50,16 @@ class Effects:
     progress_color: str | None = "#FFD400"
     sfx_volume: float = 0.35
     overlays: list[Overlay] = field(default_factory=list)
+    xfade: float = 0.0  # crossfade seconds between segments (documentary)
+    film: bool = False  # vignette + grain
+    canvas: Canvas = VERTICAL
 
 
-async def render_segment(seg: Segment, out: Path, idx: int, enc: str, punch: bool) -> Path:
+async def render_segment(seg: Segment, out: Path, idx: int, enc: str, punch: bool, cv: Canvas = VERTICAL,
+                         fade_in: bool = True) -> Path:
+    W, H, FPS = cv.w, cv.h, cv.fps
     frames = max(2, round(seg.duration * FPS))
-    fade = "fade=t=in:st=0:d=0.14:color=white" if punch else "fade=t=in:st=0:d=0.1"
+    fade = "fade=t=in:st=0:d=0.14:color=white" if punch else ("fade=t=in:st=0:d=0.1" if fade_in else "null")
     if seg.media.suffix.lower() in VIDEO_EXT:
         zoom = "scale=w='iw*(1+0.3*max(0,1-t/0.25))':h=-2:eval=frame," if punch else ""
         vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{zoom}crop={W}:{H},fps={FPS},setsar=1,"
@@ -53,10 +67,45 @@ async def render_segment(seg: Segment, out: Path, idx: int, enc: str, punch: boo
         args = ["-stream_loop", "-1", "-i", str(seg.media), "-vf", vf, "-frames:v", str(frames), "-an"]
     else:
         z, x, y = (s.replace("{n}", str(frames)) for s in (PUNCH if punch else MOTIONS[idx % len(MOTIONS)]))
-        vf = (f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
+        up = 2 if W < H else 1.5  # zoompan jitters on low-res sources; 16:9 frames are already large
+        UW, UH = int(W * up) // 2 * 2, int(H * up) // 2 * 2
+        vf = (f"scale={UW}:{UH}:force_original_aspect_ratio=increase,crop={UW}:{UH},"
               f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},setsar=1,{fade}")
         args = ["-i", str(seg.media), "-vf", vf, "-frames:v", str(frames), "-an"]
     await run_ffmpeg([*args, *encoder_args(enc, "intermediate"), "-r", str(FPS), str(out)])
+    return out
+
+
+async def xfade_join(clips: list[Path], durs: list[float], xf: float, out: Path, enc: str, batch: int = 40) -> Path:
+    """Crossfade chain; offsets equal the original cut times. Long lists are joined in batches to bound memory."""
+    if len(clips) > batch:
+        parts, starts, i = [], [], 0
+        while i < len(clips):
+            chunk = clips[i:i + batch]
+            cd = durs[i:i + batch]
+            is_last = i + batch >= len(clips)
+            p = out.with_name(f"{out.stem}_b{len(parts)}.mp4")
+            await xfade_join(chunk, cd, xf, p, enc)
+            parts.append(p)
+            starts.append(sum(cd) + (0 if is_last else 0))
+            i += batch
+        # each batch already ends with its last clip's extra xf tail (except the final one) → chain batches the same way
+        res = await xfade_join(parts, starts, xf, out, enc, batch=10 ** 9)
+        for p in parts:
+            p.unlink(missing_ok=True)
+        return res
+    args: list[str] = []
+    for c in clips:
+        args += ["-i", str(c)]
+    chain, prev, t = [], "0:v", 0.0
+    for k in range(1, len(clips)):
+        t += durs[k - 1]
+        lab = f"x{k}"
+        chain.append(f"[{prev}][{k}:v]xfade=transition=fade:duration={xf:.3f}:offset={max(0.0, t - 0.0):.3f}[{lab}]")
+        prev = lab
+    graph = ";".join(chain) if chain else "[0:v]null[x0]"
+    await run_ffmpeg([*args, "-filter_complex", graph, "-map", f"[{prev if chain else 'x0'}]",
+                      *encoder_args(enc, "intermediate"), str(out)])
     return out
 
 
@@ -76,12 +125,21 @@ def _hex(c: str) -> str:
 async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, work: Path,
                   music: Path | None, music_volume: float, fx: Effects | None = None) -> Path:
     fx = fx or Effects()
+    cv = fx.canvas
     enc = await video_encoder()
-    clips = [await render_segment(s, work / f"seg_{i}.mp4", i, enc, fx.punch and i == 0) for i, s in enumerate(segments)]
+    xf = fx.xfade if len(segments) > 1 else 0.0
+    # with crossfades every clip (except the last) is rendered xf longer so cut points stay on the audio timeline
+    clips = [await render_segment(Segment(s.media, s.duration + (xf if i < len(segments) - 1 else 0)),
+                                  work / f"seg_{i}.mp4", i, enc, fx.punch and i == 0, cv, fade_in=not xf or i == 0)
+             for i, s in enumerate(segments)]
     lst = work / "concat.txt"
-    lst.write_text("".join(f"file '{c.resolve().as_posix()}'\n" for c in clips))
     joined = work / "joined.mp4"
-    await run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(joined)])
+    if xf:
+        await xfade_join(clips, [s.duration for s in segments], xf, joined, enc)
+        lst.write_text("")
+    else:
+        lst.write_text("".join(f"file '{c.resolve().as_posix()}'\n" for c in clips))
+        await run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(joined)])
 
     total = sum(s.duration for s in segments)
     cuts, t = [], 0.0
@@ -104,8 +162,11 @@ async def compose(segments: list[Segment], voice: Path, ass: Path, out: Path, wo
         ov_idx.append(idx)
         idx += 1
 
-    v = [f"[0:v]subtitles=filename='{filter_path(ass)}':fontsdir='{ass_fonts_dir()}'[v0]"]
+    v = [f"[0:v]subtitles=filename='{filter_path(ass)}':fontsdir='{ass_fonts_dir()}'[v0]" if ass else "[0:v]null[v0]"]
     cur = "v0"
+    if fx.film:
+        v.append(f"[{cur}]vignette=PI/5,noise=alls=5:allf=t[vf]")
+        cur = "vf"
     if fx.progress_color:
         v.append(f"[{cur}]drawbox=x=0:y=0:w='iw*t/{total:.3f}':h=12:color={_hex(fx.progress_color)}@0.95:t=fill[vp]")
         cur = "vp"

@@ -75,6 +75,7 @@ class RuntimeConfig(BaseModel):
     # YouTube
     youtube_privacy: Literal["private", "unlisted", "public"] = "private"
     youtube_auto_upload: bool = False
+    youtube_daily_quota: int = 10000
 
 
 class ConfigStore:

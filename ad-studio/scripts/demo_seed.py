@@ -103,6 +103,24 @@ def main() -> None:
         c.post(f"/api/brands/{b['id']}/charges/generate")
     for v in vids[:4]:
         c.patch(f"/api/videos/{v['id']}", json={"approval": random.choice(["sent", "approved", "revision"])})
+    # documentary channel with a presenter character
+    av = Image.new("RGB", (600, 900), (38, 42, 52))
+    d = ImageDraw.Draw(av)
+    d.ellipse((200, 130, 400, 370), fill=(214, 172, 140))
+    d.rectangle((140, 390, 460, 900), fill=(92, 84, 60))
+    buf = io.BytesIO(); av.save(buf, "PNG")
+    a = c.post("/api/avatars", files={"file": ("deniz.png", buf.getvalue(), "image/png")}).json()
+    persona = c.post("/api/docu/characters/generate", json={"niche": "antik uygarlıklar"}).json()
+    ch = c.post("/api/docu/characters", json=persona | {"avatar": a["name"]}).json()
+    chan = c.post("/api/docu/channels", json={"name": "Kayıp Uygarlıklar", "niche": "antik uygarlıklar ve kayıp şehirler",
+                                              "character_id": ch["id"], "format": "both", "target_minutes": 1.5}).json()
+    c.post(f"/api/docu/channels/{chan['id']}/topics/generate?n=8")
+    ep = c.post(f"/api/docu/channels/{chan['id']}/episodes", json={"kind": "long"}).json()
+    print("documentary rendering…", end="", flush=True)
+    while c.get(f"/api/docu/episodes/{ep['id']}").json()["status"] not in ("ready", "failed", "needs_review"):
+        print(".", end="", flush=True)
+        time.sleep(3)
+    print()
     print(f"seeded {len(brands)} brands, {len(PRODUCTS)} products, {len(camps)} campaigns, {len(vids)} videos")
 
 

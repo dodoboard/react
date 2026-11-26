@@ -30,11 +30,12 @@ def frames_for(dur: float, fps: int, cap: int, floor: int = 33) -> int:
     return max(floor, min(cap, n))
 
 
-async def _t2i(prompt: str, out_dir: Path, stem: str, prog: Progress, negative_extra: str = "") -> Path:
+async def _t2i(prompt: str, out_dir: Path, stem: str, prog: Progress, negative_extra: str = "",
+               size: tuple[int, int] = (IMG_W, IMG_H)) -> Path:
     cfg = config.get()
     graph = comfy.fill(comfy.load_workflow(cfg.image_workflow), {
         "prompt": prompt, "negative": ", ".join(x for x in (cfg.negative_prompt, negative_extra) if x), "seed": comfy.seed(),
-        "width": IMG_W, "height": IMG_H, "steps": cfg.image_steps, "filename_prefix": f"adforge/{stem}"})
+        "width": size[0], "height": size[1], "steps": cfg.image_steps, "filename_prefix": f"adforge/{stem}"})
     return (await comfy.run(graph, out_dir, stem, prog))[0]
 
 
@@ -61,31 +62,37 @@ async def _product_shot(sc, i: int, style: str, cut: Path, out_dir: Path, dry: b
 
 
 async def _presenter(i: int, avatar: Path, span: tuple[float, float], voice: Path, out_dir: Path, dry: bool,
-                     prog: Progress) -> Path:
+                     prog: Progress, size: tuple[int, int] = (S2V_W, S2V_H), prompt: str = "") -> Path:
     if dry:
         await prog(1.0)
-        return graphics.cover_copy(avatar, out_dir / f"scene_{i}.png")
+        if size[0] > size[1]:
+            return graphics.presenter_frame(avatar, out_dir / f"scene_{i}.png", (size[0] * 2, size[1] * 2))
+        return graphics.cover_copy(avatar, out_dir / f"scene_{i}.png", (size[0] * 2, size[1] * 2))
     cfg = config.get()
     a, b = span
     seg_audio = out_dir / f"vo_{i}.wav"
     await run_ffmpeg(["-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(voice), "-ac", "1", "-ar", "16000", str(seg_audio)])
-    img = await comfy.upload_image(avatar)
+    ref = avatar
+    if size[0] > size[1]:  # landscape S2V: give the model a 16:9 interview frame to animate
+        ref = graphics.presenter_frame(avatar, out_dir / f"ref_presenter_{i}.png", (size[0] * 2, size[1] * 2))
+    img = await comfy.upload_image(ref)
     aud = await comfy.upload_image(seg_audio)
     graph = comfy.fill(comfy.load_workflow(cfg.avatar_workflow), {
-        "prompt": "a person talking enthusiastically to the camera, natural head movement, smartphone selfie video, realistic",
+        "prompt": prompt or "a person talking enthusiastically to the camera, natural head movement, smartphone selfie video, realistic",
         "negative": cfg.negative_prompt + ", static, frozen, distorted face, extra limbs",
-        "image": img, "audio": aud, "seed": comfy.seed(), "width": S2V_W, "height": S2V_H,
+        "image": img, "audio": aud, "seed": comfy.seed(), "width": size[0], "height": size[1],
         "length": frames_for(b - a, S2V_FPS, S2V_MAX), "fps": S2V_FPS, "filename_prefix": f"adforge/avatar_{i}"})
     return (await comfy.run(graph, out_dir, f"clip_{i}", prog))[0]
 
 
-async def _i2v(img: Path, prompt: str, dur: float, i: int, out_dir: Path, prog: Progress) -> Path:
+async def _i2v(img: Path, prompt: str, dur: float, i: int, out_dir: Path, prog: Progress,
+               size: tuple[int, int] = (VID_W, VID_H)) -> Path:
     cfg = config.get()
     uploaded = await comfy.upload_image(img)
     graph = comfy.fill(comfy.load_workflow(cfg.video_workflow), {
         "prompt": f"{prompt}, smooth cinematic camera motion, natural movement",
         "negative": cfg.negative_prompt + ", static, frozen, morphing, flicker",
-        "seed": comfy.seed(), "image": uploaded, "width": VID_W, "height": VID_H,
+        "seed": comfy.seed(), "image": uploaded, "width": size[0], "height": size[1],
         "length": frames_for(dur, VID_FPS, VID_MAX), "fps": VID_FPS, "filename_prefix": f"adforge/clip_{i}"})
     return (await comfy.run(graph, out_dir, f"clip_{i}", prog))[0]
 

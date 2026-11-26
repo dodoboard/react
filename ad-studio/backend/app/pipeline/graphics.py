@@ -47,24 +47,32 @@ def gradient(size: tuple[int, int], a: tuple[int, int, int], b: tuple[int, int, 
     return Image.composite(Image.new("RGB", size, b), Image.new("RGB", size, a), g)
 
 
-def _center_text(d: ImageDraw.ImageDraw, text: str, y: int, size: int, width_chars: int, fill=(255, 255, 255)) -> int:
+def _center_text(d: ImageDraw.ImageDraw, text: str, y: int, size: int, width_chars: int, fill=(255, 255, 255),
+                 canvas_w: int = W) -> int:
     f = font(size)
     for line in textwrap.wrap(text, width_chars):
         bb = d.textbbox((0, 0), line, font=f, stroke_width=4)
-        d.text(((W - (bb[2] - bb[0])) / 2, y), line, font=f, fill=fill, stroke_width=4, stroke_fill=(0, 0, 0, 160))
+        d.text(((canvas_w - (bb[2] - bb[0])) / 2, y), line, font=f, fill=fill, stroke_width=4, stroke_fill=(0, 0, 0, 160))
         y += int((bb[3] - bb[1]) * 1.2)
     return y
 
 
-def stub_scene(out: Path, idx: int, title: str, subtitle: str) -> Path:
+def stub_scene(out: Path, idx: int, title: str, subtitle: str, size: tuple[int, int] = (W, H)) -> Path:
+    w, h = size
     a, b = PALETTES[idx % len(PALETTES)]
-    img = gradient((W, H), a, b)
+    img = gradient((w, h), a, b)
     d = ImageDraw.Draw(img)
     for r in range(6):
-        cx, cy = (W * (0.2 + 0.15 * r)) % W, H * (0.15 + 0.13 * r)
-        d.ellipse((cx - 160, cy - 160, cx + 160, cy + 160), outline=(255, 255, 255), width=3)
-    _center_text(d, title.upper(), int(H * 0.42), 72, 18)
-    _center_text(d, subtitle, int(H * 0.56), 36, 40, fill=(235, 235, 245))
+        cx, cy = (w * (0.2 + 0.15 * r)) % w, h * (0.15 + 0.13 * r)
+        rad = min(w, h) // 7
+        d.ellipse((cx - rad, cy - rad, cx + rad, cy + rad), outline=(255, 255, 255), width=3)
+    if w == W:
+        _center_text(d, title.upper(), int(h * 0.42), 72, 18)
+        _center_text(d, subtitle, int(h * 0.56), 36, 40, fill=(235, 235, 245))
+    else:
+        f = font(56)
+        bb = d.textbbox((0, 0), title.upper(), font=f)
+        d.text(((w - (bb[2] - bb[0])) / 2, h * 0.42), title.upper(), font=f, fill=(255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0))
     img.save(out)
     return out
 
@@ -245,4 +253,92 @@ def price_badge(out: Path, price: str, label: str = "", accent: RGB = (255, 212,
         y += lb[3] - lb[1] + 16
     d.text((20 + (w - (pb[2] - pb[0])) / 2, y - pb[1]), price, font=f, fill=ink(accent))
     img.rotate(-6, resample=Image.BICUBIC, expand=True).save(out)
+    return out
+
+
+def blur_pad(src: Path, out: Path, size: tuple[int, int] = (W, H)) -> Path:
+    """Fit a wide image into a vertical frame over a blurred, darkened copy of itself."""
+    img = Image.open(src).convert("RGB")
+    bg = _cover(img, size).filter(ImageFilter.GaussianBlur(40))
+    bg = Image.blend(bg, Image.new("RGB", size, (0, 0, 0)), 0.35)
+    fg = ImageOps.contain(img, (size[0], int(size[1] * 0.62)), Image.LANCZOS)
+    bg.paste(fg, ((size[0] - fg.width) // 2, (size[1] - fg.height) // 2))
+    bg.save(out, quality=94)
+    return out
+
+
+def doc_card(out: Path, title: str, subtitle: str, accent: RGB = (234, 179, 8), size: tuple[int, int] = (1920, 1080),
+             bg: Path | None = None) -> Path:
+    """Documentary title / outro card: dark film still, thin accent rule, serif-less bold title."""
+    w, h = size
+    base = _cover(Image.open(bg), size).filter(ImageFilter.GaussianBlur(18)) if bg and bg.exists() \
+        else gradient(size, (18, 18, 24), (6, 6, 10))
+    base = Image.blend(base.convert("RGB"), Image.new("RGB", size, (8, 8, 12)), 0.55)
+    d = ImageDraw.Draw(base)
+    y = int(h * 0.40) if w > h else int(h * 0.38)
+    d.rectangle(((w - 120) // 2, y - 40, (w + 120) // 2, y - 34), fill=accent)
+    width_chars = 28 if w > h else 16
+    y = _center_text(d, title, y, 72 if w > h else 80, width_chars, canvas_w=w)
+    if subtitle:
+        _center_text(d, subtitle, y + 20, 38 if w > h else 44, 48 if w > h else 24, fill=(210, 210, 220), canvas_w=w)
+    base.save(out, quality=94)
+    return out
+
+
+def yt_thumbnail(out: Path, bg: Path, text: str, person: Path | None, accent: RGB = (250, 204, 21)) -> Path:
+    """1280x720: dramatic background, character cut-out on the right, 2-4 big words on the left."""
+    size = (1280, 720)
+    base = _cover(Image.open(bg), size)
+    base = Image.blend(base, gradient(size, (0, 0, 0), (40, 40, 40)), 0.25).convert("RGBA")
+    shade = Image.linear_gradient("L").rotate(90, expand=True).resize(size)
+    dark = Image.new("RGBA", size, (0, 0, 0, 0))
+    dark.putalpha(shade.point(lambda v: int(v * 0.75)))
+    base.alpha_composite(dark)
+    if person and person.exists():
+        p = Image.open(person).convert("RGBA")
+        p = ImageOps.contain(p, (620, 700), Image.LANCZOS)
+        glow = Image.new("RGBA", p.size, accent + (0,))
+        glow.putalpha(p.getchannel("A").filter(ImageFilter.GaussianBlur(16)).point(lambda v: int(v * 0.7)))
+        base.alpha_composite(glow, (size[0] - p.width - 10, size[1] - p.height))
+        base.alpha_composite(p, (size[0] - p.width - 10, size[1] - p.height))
+    d = ImageDraw.Draw(base)
+    max_w = 700 if person and person.exists() else 1160
+    words = tr_upper(text).split()
+    lines: list[str] = []
+    for w in words:  # greedy wrap at the largest size, then shrink each line to fit
+        if lines and len(lines[-1]) + 1 + len(w) <= 12:
+            lines[-1] += " " + w
+        else:
+            lines.append(w)
+    lines = lines[:3]
+    y = 80
+    for k, line in enumerate(lines):
+        size = 124
+        while size > 48 and d.textlength(line, font=font(size)) > max_w:
+            size -= 6
+        f = font(size)
+        fill = accent if k == len(lines) - 1 else (255, 255, 255)
+        d.text((56, y), line, font=f, fill=fill, stroke_width=10, stroke_fill=(0, 0, 0))
+        bb = d.textbbox((56, y), line, font=f, stroke_width=10)
+        y = bb[3] + 8
+    base.convert("RGB").save(out, quality=92)
+    return out
+
+
+def tr_upper(s: str) -> str:
+    return s.replace("i", "İ").replace("ı", "I").upper()
+
+
+def presenter_frame(avatar: Path, out: Path, size: tuple[int, int] = (1664, 960)) -> Path:
+    """16:9 interview framing: blurred room tone background, presenter at right third (headroom kept)."""
+    w, h = size
+    img = ImageOps.exif_transpose(Image.open(avatar)).convert("RGB")
+    bg = _cover(img, size).filter(ImageFilter.GaussianBlur(32))
+    bg = Image.blend(bg, Image.new("RGB", size, (14, 14, 18)), 0.45)
+    fg = ImageOps.contain(img, (int(w * 0.5), h), Image.LANCZOS)
+    x = int(w * 0.62 - fg.width / 2)
+    mask = Image.linear_gradient("L").rotate(90, expand=True).resize((fg.width, fg.height))
+    mask = mask.point(lambda v: min(255, v * 4))  # soft left edge
+    bg.paste(fg, (max(0, x), h - fg.height), mask)
+    bg.save(out, quality=94)
     return out

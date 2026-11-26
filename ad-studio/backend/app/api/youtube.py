@@ -10,13 +10,13 @@ from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..config import boot, config, paths
 from ..models import Video, VideoStat, session
+from ..providers import yt
+from ..providers.yt import SCOPES
 from ..pipeline.runner import load, update
 from ..pipeline.script import AdScript
 
 router = APIRouter(prefix="/api/youtube", tags=["youtube"])
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
-          "https://www.googleapis.com/auth/yt-analytics.readonly"]
-SECRET = boot.data_dir / "youtube_client_secret.json"
+SECRET = yt.SECRET
 TOKEN = boot.data_dir / "youtube_token.json"
 
 
@@ -57,8 +57,8 @@ async def connect() -> dict:
         raise HTTPException(501, "pip install -r requirements-youtube.txt") from e
 
     def flow():
-        creds = InstalledAppFlow.from_client_secrets_file(str(SECRET), SCOPES).run_local_server(port=0, open_browser=True)
-        TOKEN.write_text(creds.to_json())
+        InstalledAppFlow  # noqa: B018  (import check above)
+        yt.run_flow(TOKEN)
 
     await asyncio.to_thread(flow)
     return status()

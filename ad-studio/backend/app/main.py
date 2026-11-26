@@ -11,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import autopilot, brands, campaigns, products, revenue, system, youtube
+from .api import autopilot, brands, campaigns, docu, products, revenue, system, youtube
 from .config import ROOT, boot, config, paths
 from .events import broker
 from .models import Video, init_db, session
+from .pipeline.docu import scheduler as docu_scheduler
+from .pipeline.docu.runner import docu_runner
 from .pipeline.runner import runner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -36,10 +38,12 @@ async def scheduler() -> None:
                 broker.publish("queue", runner.snapshot())
         except Exception:
             log.exception("autopilot")
+        await docu_scheduler.tick(now, docu_runner)
         if time.time() - last_sync > 6 * 3600:
             last_sync = time.time()
             try:
                 n = await asyncio.to_thread(youtube.analytics_sync_blocking)
+                n += await asyncio.to_thread(docu_scheduler.sync_stats_blocking)
                 if n:
                     log.info("YouTube analytics: %s satır", n)
             except Exception as e:
@@ -66,17 +70,19 @@ async def scheduler() -> None:
 async def lifespan(_: FastAPI):
     init_db()
     runner.start()
+    docu_runner.start()
     task = asyncio.create_task(scheduler())
     log.info("AdForge hazır%s → http://%s:%s", " (DEMO / dry-run)" if boot.dry_run else "", boot.host, boot.port)
     yield
     task.cancel()
     await runner.stop()
+    await docu_runner.stop()
 
 
 app = FastAPI(title="AdForge", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
-for r in (system.router, products.router, campaigns.router, revenue.router, youtube.router, autopilot.router, brands.router):
+for r in (system.router, products.router, campaigns.router, revenue.router, youtube.router, autopilot.router, brands.router, docu.router):
     app.include_router(r)
 app.mount("/media", StaticFiles(directory=paths.media), name="media")
 

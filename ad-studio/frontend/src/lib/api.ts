@@ -93,6 +93,30 @@ export interface Rule {
 }
 export interface Avatar { name: string; url: string }
 
+export interface Character {
+  id: number; name: string; persona: string; speaking_style: string; catchphrases: string; opening_line: string;
+  closing_line: string; look_prompt: string; avatar: string; voice_id: string; language: string; avatar_url: string | null; channels: number;
+}
+export type EpStatus = "queued" | "outline" | "script" | "gate" | "voice" | "visuals" | "compose" | "thumbnail" | "shorts"
+  | "ready" | "uploading" | "scheduled" | "published" | "needs_review" | "failed" | "cancelled";
+export interface Episode {
+  id: number; channel_id: number; topic_id: number | null; kind: "long" | "short"; parent_id: number | null; status: EpStatus;
+  progress: number; step: string; error: string; quality_score: number | null; title: string; description: string; tags: string;
+  video_url: string | null; thumb_url: string | null; duration: number | null; slot_at: string | null; yt_id: string;
+  published_at: string | null; created_at: string; updated_at: string; chapters: { t: number; title: string }[];
+  quality: { score: number; hook: number; flow: number; originality: number; accuracy_risk: number; issues: string[] } | null;
+  channel_name?: string; script?: { chapters: { title: string; segments: { kind: string; text: string; lower_third: string }[] }[] } | null;
+  srt_url?: string | null;
+}
+export interface Channel {
+  id: number; name: string; niche: string; language: string; character_id: number | null; format: "long" | "shorts" | "both";
+  target_minutes: number; visual_style: string; music: string; privacy: string; category_id: string; default_tags: string;
+  playlist_id: string; schedule_json: string; lead_days: number; daily_cap: number; min_quality: number; paused: boolean; run_hour: number;
+  character: Character | null; connected: boolean; backlog: number; episodes: number; published: number; in_production: number;
+  needs_review: number; next: Episode | null; next_slots: string[]; views: number;
+}
+export interface Topic { id: number; channel_id: number; title: string; angle: string; hook: string; score: number; sensitive: boolean; sensitive_reason: string; status: "idea" | "approved" | "rejected" | "used" }
+
 const qb = (url: string, brandId?: number | null) =>
   brandId ? `${url}${url.includes("?") ? "&" : "?"}brand_id=${brandId}` : url;
 
@@ -178,6 +202,33 @@ export const api = {
   uploadAvatar: (f: File) => req<Avatar>("POST", "/api/avatars", file(f)),
   generateAvatar: (description: string) => req<Avatar>("POST", "/api/avatars/generate", { description }),
   deleteAvatar: (n: string) => req("DELETE", `/api/avatars/${encodeURIComponent(n)}`),
+  characters: () => req<Character[]>("GET", "/api/docu/characters"),
+  saveCharacter: (c: Partial<Character>) => c.id ? req<Character>("PUT", `/api/docu/characters/${c.id}`, c) : req<Character>("POST", "/api/docu/characters", c),
+  deleteCharacter: (id: number) => req("DELETE", `/api/docu/characters/${id}`),
+  generatePersona: (b: { niche: string; name?: string; vibe?: string; language?: string }) => req<Partial<Character>>("POST", "/api/docu/characters/generate", b),
+  previewVoice: (id: number, text = "") => req<{ url: string }>("POST", `/api/docu/characters/${id}/preview`, { text }),
+  channels: () => req<Channel[]>("GET", "/api/docu/channels"),
+  channel: (id: number) => req<Channel>("GET", `/api/docu/channels/${id}`),
+  saveChannel: (c: Partial<Channel>) => c.id ? req<Channel>("PUT", `/api/docu/channels/${c.id}`, c) : req<Channel>("POST", "/api/docu/channels", c),
+  deleteChannel: (id: number) => req("DELETE", `/api/docu/channels/${id}`),
+  pauseChannel: (id: number, paused: boolean) => req<Channel>("POST", `/api/docu/channels/${id}/pause?paused=${paused}`),
+  connectChannel: (id: number) => req<{ connected: boolean; channel: { title: string } }>("POST", `/api/docu/channels/${id}/connect`),
+  channelYT: (id: number) => req<{ connected: boolean; channel?: { title: string; thumbnail: string; subscribers: number }; error?: string }>("GET", `/api/docu/channels/${id}/youtube`),
+  channelStats: (id: number) => req<{ series: { day: string; views: number }[]; top: { id: number; title: string; kind: string; views: number; retention: number | null }[] }>("GET", `/api/docu/channels/${id}/stats`),
+  topics: (cid: number) => req<Topic[]>("GET", `/api/docu/channels/${cid}/topics`),
+  generateTopics: (cid: number, n = 10) => req<Topic[]>("POST", `/api/docu/channels/${cid}/topics/generate?n=${n}`),
+  addTopic: (cid: number, title: string, angle = "") => req<Topic>("POST", `/api/docu/channels/${cid}/topics`, { title, angle }),
+  patchTopic: (id: number, b: Partial<Topic>) => req<Topic>("PATCH", `/api/docu/topics/${id}`, b),
+  episodes: (cid?: number) => req<Episode[]>("GET", `/api/docu/episodes${cid ? `?channel_id=${cid}` : ""}`),
+  episode: (id: number) => req<Episode>("GET", `/api/docu/episodes/${id}`),
+  createEpisode: (cid: number, b: { kind: "long" | "short"; topic_id?: number }) => req<Episode>("POST", `/api/docu/channels/${cid}/episodes`, b),
+  retryEpisode: (id: number, full = false) => req("POST", `/api/docu/episodes/${id}/retry?full=${full}`),
+  approveEpisode: (id: number) => req("POST", `/api/docu/episodes/${id}/approve`),
+  cancelEpisode: (id: number) => req("POST", `/api/docu/episodes/${id}/cancel`),
+  publishNow: (id: number) => req<{ yt_id: string }>("POST", `/api/docu/episodes/${id}/publish-now`),
+  deleteEpisode: (id: number) => req("DELETE", `/api/docu/episodes/${id}`),
+  quota: () => req<{ used: number; limit: number; episode_cost: number; uploads_left: number }>("GET", "/api/docu/quota"),
+  upcoming: () => req<Episode[]>("GET", "/api/docu/upcoming"),
   rules: () => req<Rule[]>("GET", "/api/autopilot"),
   saveRule: (r: Partial<Rule>) => r.id ? req<Rule>("PUT", `/api/autopilot/${r.id}`, r) : req<Rule>("POST", "/api/autopilot", r),
   deleteRule: (id: number) => req("DELETE", `/api/autopilot/${id}`),

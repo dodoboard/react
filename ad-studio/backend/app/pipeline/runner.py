@@ -16,6 +16,7 @@ from ..models import ACTIVE, Campaign, CampaignProduct, Product, Video, VideoSta
 from ..providers import comfy, ollama, tts
 from . import brandkit, graphics, insights, product as product_mod, script as script_mod, subtitles, timeline as tl_mod, visuals
 from .compose import Effects, Overlay, Segment, compose
+from .gpu import gpu_lock
 
 log = logging.getLogger("adforge.runner")
 STAGES = ("script", "voice", "visuals", "compose")
@@ -138,31 +139,43 @@ class Runner:
         alive = list(job.video_ids)
         timers = {vid: 0.0 for vid in alive}
         for stage in job.stages:
-            if stage == "script":
-                await self._tournament(alive)
-            for vid in list(alive):
-                v, _, _ = load(vid)
-                if v.status == VideoStatus.cancelled:
-                    alive.remove(vid)
-                    continue
-                t0 = time.time()
-                try:
-                    lo, _ = PROGRESS[stage]
-                    update(vid, status=STATUS[stage], progress=lo)
-                    await getattr(self, f"_{stage}")(vid)
-                    update(vid, stage_done=stage)
-                except Cancelled:
-                    alive.remove(vid)
-                except Exception as e:
-                    log.exception("stage %s failed for %s", stage, vid)
-                    update(vid, status=VideoStatus.failed, error=f"{stage}: {e}"[:1000])
-                    alive.remove(vid)
-                finally:
-                    timers[vid] = timers.get(vid, 0) + time.time() - t0
-            if stage == "script" and not boot.dry_run:
-                await ollama.unload()
-            if stage == "visuals" and not boot.dry_run:
-                await comfy.free()
+            if stage != "compose":
+                await gpu_lock().acquire()
+            try:
+                await self._stage(stage, alive, timers)
+            finally:
+                if stage != "compose":
+                    gpu_lock().release()
+        self._finish(job, alive, timers)
+
+    async def _stage(self, stage: str, alive: list[int], timers: dict[int, float]) -> None:
+        if stage == "script":
+            await self._tournament(alive)
+        for vid in list(alive):
+            v, _, _ = load(vid)
+            if v.status == VideoStatus.cancelled:
+                alive.remove(vid)
+                continue
+            t0 = time.time()
+            try:
+                lo, _ = PROGRESS[stage]
+                update(vid, status=STATUS[stage], progress=lo)
+                await getattr(self, f"_{stage}")(vid)
+                update(vid, stage_done=stage)
+            except Cancelled:
+                alive.remove(vid)
+            except Exception as e:
+                log.exception("stage %s failed for %s", stage, vid)
+                update(vid, status=VideoStatus.failed, error=f"{stage}: {e}"[:1000])
+                alive.remove(vid)
+            finally:
+                timers[vid] = timers.get(vid, 0) + time.time() - t0
+        if stage == "script" and not boot.dry_run:
+            await ollama.unload()
+        if stage == "visuals" and not boot.dry_run:
+            await comfy.free()
+
+    def _finish(self, job: Job, alive: list[int], timers: dict[int, float]) -> None:
         for vid in job.video_ids:
             v, _, _ = load(vid)
             kw = {"render_seconds": v.render_seconds + timers.get(vid, 0)}

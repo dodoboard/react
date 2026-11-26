@@ -26,6 +26,7 @@ function Kpi({ icon, label, value, sub, tone, i }: { icon: ReactNode; label: str
 
 export default function Dashboard() {
   const { brandId } = useBrand();
+  const { data: upcoming } = useQuery({ queryKey: ["upcoming"], queryFn: api.upcoming, refetchInterval: 60_000 });
   const { data: s } = useQuery({ queryKey: ["summary", 30, brandId], queryFn: () => api.summary(30, brandId) });
   const { data: vids } = useQuery({ queryKey: ["videos", "recent", brandId], queryFn: () => api.videos("?limit=6", brandId) });
   const { data: h } = useQuery({ queryKey: ["health"], queryFn: api.health });
@@ -97,6 +98,26 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {upcoming && upcoming.length > 0 && !brandId && (
+        <div className="card mt-6 p-5">
+          <div className="mb-4 flex items-end justify-between">
+            <div><h3 className="font-display font-bold">Sıradaki YouTube yayınları</h3><p className="text-xs text-muted">Belgesel kanalları · otomatik</p></div>
+            <Link to="/channels" className="text-sm font-medium text-brand">Kanallar</Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {upcoming.slice(0, 4).map((e) => (
+              <Link key={e.id} to={`/channels/${e.channel_id}`} className="group overflow-hidden rounded-xl border border-line bg-elev/30 transition hover:border-brand/40">
+                <div className="aspect-video bg-elev">{e.thumb_url && <img src={e.thumb_url} className="h-full w-full object-cover" />}</div>
+                <div className="p-2.5">
+                  <p className="line-clamp-1 text-sm font-medium">{e.title}</p>
+                  <p className="text-[11px] text-muted">{e.channel_name} · {new Date(e.slot_at!).toLocaleString("tr-TR", { weekday: "short", hour: "2-digit", minute: "2-digit" })} · {e.kind === "short" ? "Shorts" : "Belgesel"}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {s && !brandId && s.by_brand.length > 0 && (
         <div className="card mt-6 p-5">
