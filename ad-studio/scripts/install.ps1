@@ -42,8 +42,27 @@ Winget "Ollama.Ollama" "ollama"
 Winget "7zip.7zip" "7z"
 
 Step "ComfyUI"
+# Reuse an existing install (portable, desktop app or git clone): find its models folder.
+function Find-Models($dir) {
+  foreach ($c in @((Join-Path $dir "ComfyUI\models"), (Join-Path $dir "models"))) { if (Test-Path $c) { return (Resolve-Path $c).Path } }
+  return $null
+}
+$comfyRunning = [bool](Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue)
+$modelsDir = Find-Models $ComfyDir
+if (-not $modelsDir) {
+  foreach ($guess in @("$env:USERPROFILE\Documents\ComfyUI", "$env:LOCALAPPDATA\Programs\ComfyUI\resources\ComfyUI",
+                       "C:\ComfyUI", "C:\ComfyUI_windows_portable", "D:\ComfyUI", "D:\ComfyUI_windows_portable",
+                       "C:\AI\ComfyUI", "C:\AI\ComfyUI_windows_portable")) {
+    if ($m = Find-Models $guess) { $ComfyDir = $guess; $modelsDir = $m; break }
+  }
+}
+if ($comfyRunning -and -not $modelsDir) {
+  throw "ComfyUI 8188'de çalışıyor ama models klasörü bulunamadı. -ComfyDir <ComfyUI klasörü> ile yolu verin."
+}
 $comfyPy = Join-Path $ComfyDir "python_embeded\python.exe"
-if (-not (Test-Path $comfyPy)) {
+$state = if ($comfyRunning) { " (çalışıyor)" } else { "" }
+if ($modelsDir) { Write-Host "  [ok] mevcut ComfyUI: $modelsDir$state" }
+elseif (-not (Test-Path $comfyPy)) {
   $parent = Split-Path -Parent $ComfyDir
   New-Item -ItemType Directory -Force -Path $parent | Out-Null
   $archive = Join-Path $parent "ComfyUI_windows_portable_nvidia.7z"
@@ -53,7 +72,8 @@ if (-not (Test-Path $comfyPy)) {
   }
   & 7z x $archive "-o$parent" -y | Out-Null
   if (-not (Test-Path $comfyPy)) { throw "ComfyUI açılamadı: $archive" }
-} else { Write-Host "  [ok] $ComfyDir" }
+  $modelsDir = Find-Models $ComfyDir
+}
 
 Step "AdForge backend"
 $venvPy = Join-Path $root "backend\.venv\Scripts\python.exe"
@@ -72,7 +92,8 @@ Pop-Location
 if (-not $SkipModels) {
   Step "Modeller ve fontlar"
   $only = if ($Full) { "flux,upscaler,fonts,kontext,wan-i2v,infinitetalk" } else { "flux,upscaler,fonts" }
-  & $venvPy scripts\setup_models.py --comfy (Join-Path $ComfyDir "ComfyUI") --only $only --skip-ollama
+  # setup_models skips files that already exist, so models you already have are not downloaded again
+  & $venvPy scripts\setup_models.py --comfy (Split-Path -Parent $modelsDir) --only $only --skip-ollama
   Step "Ollama modeli: $OllamaModel"
   if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) { Start-Process ollama -ArgumentList "serve" -WindowStyle Hidden; Start-Sleep 3 }
   ollama pull $OllamaModel
@@ -87,8 +108,9 @@ foreach ($k in $set.Keys) { $cfg | Add-Member -NotePropertyName $k -NoteProperty
 $cfg | ConvertTo-Json -Depth 5 | Set-Content $cfgPath -Encoding UTF8
 
 Step "Başlatma"
-if (-not (Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue)) {
-  Start-Process -FilePath (Join-Path $ComfyDir "run_nvidia_gpu.bat") -WorkingDirectory $ComfyDir -WindowStyle Minimized
+$bat = Join-Path $ComfyDir "run_nvidia_gpu.bat"
+if (-not (Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue) -and (Test-Path $bat)) {
+  Start-Process -FilePath $bat -WorkingDirectory $ComfyDir -WindowStyle Minimized
 }
 if (-not (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)) {
   Start-Process -FilePath $venvPy -ArgumentList "-m", "app.main" -WorkingDirectory (Join-Path $root "backend") -WindowStyle Minimized

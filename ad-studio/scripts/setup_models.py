@@ -48,6 +48,16 @@ def select(entries: list[dict], only: list[str] | None, files: list[str] | None)
     return out
 
 
+def existing_anywhere(entry: dict, comfy: Path | None) -> Path | None:
+    """ComfyUI scans subfolders too: a model already sitting in e.g. models/unet or models/checkpoints/flux counts."""
+    if comfy is None or entry["folder"] == "@fonts":
+        return None
+    base = comfy / "models" if (comfy / "models").exists() else comfy
+    if not base.exists():
+        return None
+    return next(base.rglob(entry["file"]), None)
+
+
 def download(url: str, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     part = dst.with_suffix(dst.suffix + ".part")
@@ -89,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(entries)} dosya, ~{total:.1f} GB")
     for e in entries:
         dst = target(e, comfy, a.data)
+        elsewhere = existing_anywhere(e, comfy)
+        if elsewhere and not dst.exists():
+            print(f"[VAR (başka klasörde)] {e['feature']:12} {elsewhere}")
+            continue
         state = "VAR" if dst.exists() else "İNDİRİLECEK"
         print(f"[{state:11}] {e['feature']:12} {dst}" + ("  (yolu doğrulayın)" if e.get("verify") else ""))
         if a.dry_run or dst.exists():
