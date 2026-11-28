@@ -28,6 +28,14 @@ Hedef donanım: RTX 5080 (16 GB VRAM) · Core Ultra 9 275HX · 32 GB RAM · Wind
 | **Hareket** | InfiniteTalk (ComfyUI yerleşik, 25 fps) varsayılan konuşan sunucu motoru; doğal mimik/jest prompt'ları; düşük fps klipler `minterpolate` ile 30 fps; Ken Burns yumuşak hızlanma/yavaşlama (5 farklı hareket); belgesel b-roll'unun ayarlanabilir oranı Wan i2v ile gerçek harekete (bölüm açılışları öncelikli); Lightning LoRA ile 6 adımlık hızlı i2v. |
 | **Kurulum** | `scripts/setup_models.py` (devam ettirilebilir model + font indirme, `--only`, `--files`, `--dry-run`); **Sistem Durumu** sayfası: FFmpeg filtreleri/NVENC, font, disk, Ollama + JSON şema testi, ComfyUI'da her workflow'un node ve model dosyası kontrolü (eksik node paketi ve indirme komutu ile), ElevenLabs kota/model, YouTube; **Gerçek testi çalıştır** (LLM → görsel → ses → montaj, süreleriyle). |
 
+**Tek komutla kurulum (Windows)** — araçlar (winget), ComfyUI portable, backend/arayüz, temel modeller, Ollama modeli ve başlatma:
+```powershell
+git clone -b ccr-086a5940-golfox https://github.com/dodoboard/react.git C:\AI\adforge
+cd C:\AI\adforge\ad-studio
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1            # temel (~30 GB)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Full      # + Kontext, InfiniteTalk, Wan (~95 GB)
+```
+
 **İlk kurulum (önerilen sıra)**
 ```powershell
 python scripts\setup_models.py --comfy D:\ComfyUI_windows_portable\ComfyUI --only flux,upscaler,kontext,infinitetalk,wan-i2v,fonts
